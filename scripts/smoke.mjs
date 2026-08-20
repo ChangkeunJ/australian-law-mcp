@@ -43,6 +43,38 @@ for (const no of ['50-5', '90-5']) {
 }
 ok(`dashed numbering: ${tasa.provisions.length} unique provisions, s 50-5 and s 90-5 resolve`);
 
+// Three epub generations reach the same parser: ActHead classes from about
+// 2005, bare <hN> headings before that, and as-made scans with no markup at
+// all. Each one silently returned an act with no sections at some point.
+const generations = [
+  ['C2004A03348', '2005-06-01', 'pre-2005 <hN> compilation', 20],
+  ['C2004A04183', undefined, 'repealed act frozen at a 1992 compilation', 90],
+  ['C1932A00004', undefined, 'as-made 1932 scan with no markup', 20],
+];
+for (const [id, asAt, what, least] of generations) {
+  const old = parseAct(epubDocuments(await frl.getEpub(id, asAt)));
+  assert.ok(old.provisions.length >= least, `${what}: ${old.provisions.length} provisions, expected at least ${least}`);
+  assert.ok(findProvision(old, '3'), `${what}: s 3 must resolve`);
+  ok(`${what}: ${old.provisions.length} provisions`);
+}
+
+// The rate tables of an older compilation live in <h1> schedules.
+const oldItra = parseAct(epubDocuments(await frl.getEpub('C2004A03348', '2005-06-01')));
+const oldSchedule = findProvision(oldItra, 'Schedule 7');
+assert.ok(oldSchedule && /\$/.test(oldSchedule.body), 'pre-2005 Schedule 7 must carry its rate table');
+assert.ok(
+  !oldItra.provisions.some((p) => /Table of Acts|Date of Assent/i.test(p.body)),
+  'the compilation notes must not be filed inside a provision',
+);
+ok(`pre-2005 schedules: "${oldSchedule.no}—${oldSchedule.heading}" kept, endnotes kept out`);
+
+const status = await frl.findVersion('C2004A03348', '2017-01-05');
+assert.equal(status.status, 'InForce', 'the status enum arrives as a number for a point-in-time lookup');
+ok(`point-in-time status resolves to a name: ${status.status}`);
+
+assert.equal(await frl.getTitle('C9999X99999'), null, 'an unknown title id is answered, not thrown');
+ok('an unknown title id comes back as no such title');
+
 assert.throws(() => frl.assertDate('2017-13-45'), /not a real calendar date/);
 assert.throws(() => frl.assertDate('1800-01-01'), /predates federation/);
 ok('calendar-impossible dates are rejected rather than reported as "no version in force"');

@@ -95,5 +95,55 @@ const early = await rpc('tools/call', {
 assert.match(early.result.content[0].text, /earliest version on the register starts 1936-06-02/);
 console.log('ok  get_law_as_at: pre-commencement date reports the true earliest version');
 
+// A real provision of an act whose compilation predates the ActHead markup
+// must never come back as missing. Reporting a law as having no sections is
+// worse than reporting nothing at all.
+const older = await rpc('tools/call', {
+  name: 'verify_citations',
+  arguments: { text: 'See the Australian Wool Corporation Act 1991, s 3.' },
+});
+const olderText = older.result.content[0].text;
+assert.match(olderText, /\[OK\] s 3 exists/);
+assert.doesNotMatch(olderText, /\[NOT FOUND\]/);
+console.log('ok  verify_citations: a pre-2005 compilation resolves its sections');
+
+// Two compilations a year apart differ by an amendment of a few items, so a
+// summary claiming the whole act was enacted is a false statement about the law.
+const compare = await rpc('tools/call', {
+  name: 'compare_versions',
+  arguments: { titleId: 'C2004A03348', dateA: '2005-06-01', dateB: '2006-06-01' },
+});
+const added = (compare.result.content[0].text.match(/^\+ /gm) ?? []).length;
+assert.ok(added < 10, `expected a small amendment, got ${added} provisions reported as added`);
+console.log(`ok  compare_versions: reports ${added} additions, not the whole act`);
+
+const reversed = await rpc('tools/call', {
+  name: 'compare_versions',
+  arguments: { titleId: 'C2004A03348', dateA: '2016-12-15', dateB: '2016-11-01' },
+});
+assert.match(reversed.result.content[0].text, /must be on or before/);
+console.log('ok  compare_versions: dates in the wrong order are refused, not inverted');
+
+const lastPage = await rpc('tools/call', {
+  name: 'get_law_text',
+  arguments: { titleId: 'C2004A03348', full: true, page: 16 },
+});
+assert.match(lastPage.result.content[0].text, /\[page 16 of 16 — end of text\]/);
+console.log('ok  get_law_text: the last page does not invite a page that does not exist');
+
+// The register buries principal acts under their own amending acts, so these
+// three are the ones a name search has to get right.
+for (const [query, wanted] of [
+  ['migration', 'C1958A00062'],
+  ['corporations', 'C2004A00818'],
+  ['income tax assessment', 'C2004A05138'],
+]) {
+  const found = await rpc('tools/call', { name: 'search_law', arguments: { query } });
+  const rows = found.result.content[0].text.split('\n').slice(1);
+  const rank = rows.findIndex((line) => line.startsWith(wanted));
+  assert.ok(rank >= 0 && rank < 3, `"${query}" put ${wanted} at rank ${rank + 1}`);
+  console.log(`ok  search_law: "${query}" returns ${wanted} at rank ${rank + 1}`);
+}
+
 child.kill();
 console.log('protocol test passed');
