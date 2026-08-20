@@ -1,0 +1,13 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "australian-law-mcp",
+  "description": "MCP server for Australia's Federal Register of Legislation: read Commonwealth law as it stood on any date, and check citations against the official register",
+  "rules": [
+    "Call search_law first to get a register title id; the other tools take that id, not a name.",
+    "Use get_law_as_at for anything historical. get_law_text returns the current compilation, which may not be the law that applied on the date being asked about.",
+    "Run verify_citations before presenting statute citations to a user. Treat UNVERIFIED as unknown, not as confirmation.",
+    "REPEALED and NOT FOUND mean different things: a repealed act existed and still matters for past conduct.",
+    "When the server reports that a compilation could not be broken into numbered provisions, say so and link the register. Do not infer the text.",
+    "Reproducing register content requires the attribution the tool returns with it."
+  ]
+}
