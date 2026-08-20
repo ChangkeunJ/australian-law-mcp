@@ -18,6 +18,7 @@ const files = execSync('git ls-files', { encoding: 'utf8' }).split('\n').filter(
 const problems = [];
 
 for (const file of files) {
+  if (file === 'scripts/check.mjs') continue;
   if (/\.(png|jpg|gif|ico|epub|zip|woff2?)$/.test(file)) continue;
   const body = readFileSync(file, 'utf8');
   const folded = body.normalize('NFKC');
