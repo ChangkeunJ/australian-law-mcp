@@ -34,6 +34,14 @@ Claude Desktop, Cursor, or any other stdio MCP client:
 Requires Node 20 or newer. Nothing else to install — `npx` fetches
 [the package](https://www.npmjs.com/package/australian-law-mcp) on first run.
 
+There is a `Dockerfile` if you would rather not have Node on the host. The
+server speaks stdio, so the container needs `-i`:
+
+```
+docker build -t australian-law-mcp .
+docker run -i --rm australian-law-mcp
+```
+
 ## Tools
 
 | tool | what it does |
