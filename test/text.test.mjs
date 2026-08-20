@@ -105,6 +105,72 @@ test('a self-closing paragraph does not steal the next block class', () => {
   assert.equal(blocks[0].text, 'x');
 });
 
+// Compilations from before about 2005 carry no ActHead classes at all: the
+// heading levels are bare <hN> tags. Reading only <p> silently returned an act
+// with no sections, which is a false statement about the law rather than a
+// gap in coverage.
+const OLD_FIXTURE = `
+<p class="TOC2"><span>Part I—Preliminary</span></p>
+<h2 id="navPoint_2"><a id="_Toc1"><span class="CharPartNo">Part</span><span class="CharPartNo">&#xa0;</span><span class="CharPartNo">I</span><span>&#8212;</span><span class="CharPartText">Preliminary</span></a></h2>
+<h5 id="navPoint_3"><a id="_Toc2"><span class="CharSectno">3</span><span>&#xa0; </span><span>Interpretation</span></a></h5>
+<p class="subsection"><span>In this Act, unless the contrary intention appears.</span></p>
+<h1 id="navPoint_9"><a id="_Toc9"><span class="CharChapNo">Schedule</span><span class="CharChapNo">&#xa0;7</span><span>&#8212;</span><span>General rates of tax</span></a></h1>
+<p class="Tabletext"><span>exceeds $45,000 but does not exceed $135,000</span></p>
+<p class="NotesSection"><span>Notes to the Example Act 1986</span></p>
+<p class="TableOfActs1"><span>Example Act 1986</span></p>
+`;
+
+test('a pre-2005 compilation using <hN> headings still yields provisions', () => {
+  const act = parseAct(OLD_FIXTURE);
+  const s3 = findProvision(act, '3');
+  assert.ok(s3, 'an act whose headings are <h5> must not parse to zero sections');
+  assert.equal(s3.heading, 'Interpretation');
+  assert.equal(s3.context, 'Part I—Preliminary');
+  const sch = findProvision(act, 'Schedule 7');
+  assert.ok(sch, '<h1> carries the schedules in this generation');
+  assert.match(sch.body, /exceeds \$45,000/);
+});
+
+test('the older generation ends its text at "Notes to the ..."', () => {
+  const act = parseAct(OLD_FIXTURE);
+  assert.ok(!findProvision(act, 'Schedule 7').body.includes('Example Act 1986'));
+  assert.match(act.endnotes, /Notes to the Example Act 1986/);
+});
+
+// As-made scans from 1901 into the 1970s have no structural markup whatsoever.
+const FLAT_FIXTURE = `
+<p><span>INSURANCE.</span></p>
+<p><span>No. 4 of 1932.</span></p>
+<p><span>Short title.</span></p>
+<p><span>1. This Act may be cited as the Insurance Act 1932.</span></p>
+<p><span>Definitions.</span></p>
+<p><span>3.&#8212;(1.) In this Act, unless the contrary intention appears&#8212;</span></p>
+<p><span>&#8220;Accident insurance business&#8221; means the issue of policies.</span></p>
+<p><span>THE SCHEDULE.</span></p>
+<p><span>Form of application.</span></p>
+`;
+
+test('an as-made scan with no markup is read from its own numbering', () => {
+  const act = parseAct(FLAT_FIXTURE);
+  const s1 = findProvision(act, '1');
+  assert.ok(s1);
+  assert.equal(s1.heading, 'Short title');
+  const s3 = findProvision(act, '3');
+  assert.match(s3.body, /Accident insurance business/);
+  assert.equal(s3.heading, 'Definitions');
+  assert.ok(!s1.body.includes('Definitions'), 'a marginal note belongs to the section below it, not above');
+  assert.match(findProvision(act, 'Schedule').body, /Form of application/);
+});
+
+test('unstructured text that does not open at section 1 is declined, not guessed', () => {
+  // Compilation notes: numbers that look like sections but are not.
+  const notes = `<p><span>Schedule................</span></p>
+    <p><span>am. No. 141, 1987</span></p>
+    <p><span>17. Repealed by No. 73, 1988</span></p>
+    <p><span>19. Repealed by No. 8, 1979</span></p>`;
+  assert.deepEqual(parseAct(notes).provisions, [], 'a wrong guess would file notes under section numbers');
+});
+
 test('diffLines marks additions and removals', () => {
   const diff = diffLines('one\ntwo\nthree', 'one\ntwo changed\nthree\nfour');
   assert.deepEqual(
