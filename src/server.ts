@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import * as frl from './frl.js';
@@ -12,7 +13,11 @@ import {
   parseAct,
 } from './text.js';
 
-const VERSION = '0.1.0';
+// Read rather than hardcode: a stale literal here reports the wrong server
+// version to every client after a release.
+const VERSION: string = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+).version;
 const PAGE_SIZE = 5000;
 
 // The register's terms require this exact attribution wording for changed
