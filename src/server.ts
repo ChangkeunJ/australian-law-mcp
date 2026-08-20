@@ -37,7 +37,11 @@ function paginate(text: string, page = 1): string {
   const pages = Math.max(1, Math.ceil(text.length / PAGE_SIZE));
   const current = Math.min(Math.max(1, Math.trunc(page)), pages);
   const slice = text.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
-  return pages > 1 ? `${slice}\n\n[page ${current} of ${pages} — request page=${current + 1} to continue]` : slice;
+  if (pages === 1) return slice;
+  // Inviting a page past the last one sends the caller round a loop: the
+  // request clamps back and returns this same instruction.
+  const more = current < pages ? ` — request page=${current + 1} to continue` : ' — end of text';
+  return `${slice}\n\n[page ${current} of ${pages}${more}]`;
 }
 
 function statusLabel(t: frl.Title): string {
@@ -51,18 +55,61 @@ function statusLabel(t: frl.Title): string {
 // Keyed by register id, not by title and date: a register id names one
 // immutable compilation, so a newly published compilation can never be served
 // under the previous one's text.
+//
+// Counting entries is not enough to bound this: one parsed ITAA 1997 is ~90 MB
+// while a short instrument is a few kilobytes, so the character budget is what
+// actually keeps a long-lived stdio process from pinning half a gigabyte.
+const CACHE_ENTRIES = 8;
+const CACHE_CHARS = 12_000_000;
 const actCache = new Map<string, ActText>();
+const actChars = new Map<string, number>();
+const fullBody = new WeakMap<ActText, string>();
+let cachedChars = 0;
+
+function sizeOf(act: ActText): number {
+  let n = act.endnotes.length;
+  for (const p of act.provisions) n += p.no.length + p.heading.length + p.body.length;
+  return n;
+}
 
 async function loadAct(version: frl.Version, asAt?: string): Promise<ActText> {
   const hit = actCache.get(version.registerId);
   if (hit) return hit;
   const act = parseAct(epubDocuments(await frl.getEpub(version.titleId, asAt)));
-  if (actCache.size > 8) {
-    const oldest = actCache.keys().next().value;
-    if (oldest !== undefined) actCache.delete(oldest);
-  }
+  const size = sizeOf(act);
   actCache.set(version.registerId, act);
+  actChars.set(version.registerId, size);
+  cachedChars += size;
+  while (actCache.size > 1 && (actCache.size > CACHE_ENTRIES || cachedChars > CACHE_CHARS)) {
+    const oldest = actCache.keys().next().value;
+    if (oldest === undefined) break;
+    actCache.delete(oldest);
+    cachedChars -= actChars.get(oldest) ?? 0;
+    actChars.delete(oldest);
+  }
   return act;
+}
+
+// Joining 4,649 provisions into a 7 MB string on every page request is the
+// whole cost of reading a large act page by page, so it is done once.
+function fullText(act: ActText): string {
+  let body = fullBody.get(act);
+  if (body === undefined) {
+    body = act.provisions.map((p) => `${label(p)}  ${p.heading}\n${p.body}`).join('\n\n');
+    fullBody.set(act, body);
+  }
+  return body;
+}
+
+// A compilation whose text would not break into provisions must never be
+// answered as a law that has no sections. That is a false statement about the
+// law, and it is the one failure this server cannot afford.
+function unparsed(v: frl.Version): string {
+  return (
+    `The text of this compilation (register id ${v.registerId}) could not be broken into numbered ` +
+    `provisions, so nothing about its sections can be reported here. This is a limitation of this ` +
+    `tool, not a statement about the law. Read it on the register: ${webLink(v.titleId)}`
+  );
 }
 
 function versionHeader(v: frl.Version): string {
@@ -108,10 +155,13 @@ function missingSection(act: ActText, section: string): string {
     .map((p) => `${label(p)} (${p.heading})`)
     .join(', ');
   return (
-    `Provision ${section} was not found in this compilation. ` +
-    `It has ${counts(act)}. Closest by number: ${close}.`
+    `Provision ${section} was not found in this compilation. It has ${counts(act)}.` +
+    (close ? ` Closest by number: ${close}.` : '')
   );
 }
+
+const KEYWORD = /\b(act|regulations?|rules|code|determination)\b/i;
+const EMPTY: frl.SearchResult = { count: 0, titles: [] };
 
 type Args = Record<string, unknown>;
 
@@ -155,30 +205,53 @@ export function createServer(): McpServer {
     tool(async (args) => {
       const query = (args.query as string).replace(/[,;:]+/g, ' ').replace(/\s+/g, ' ').trim();
       const limit = (args.limit as number | undefined) ?? 10;
-      let result = await frl.searchTitles(query, 'name', 'all', 50);
+      const wanted = query.toLowerCase();
+      // The register orders a name search by a relevance that is flat across
+      // every title containing the words, so "migration" buries the Migration
+      // Act 1958 beneath two thousand amending acts and instruments and no
+      // amount of local ranking over the first page recovers it. Anchoring a
+      // second search on the opening words plus the title keyword narrows the
+      // set to something a page can hold, and the two are merged and ranked
+      // here.
+      const anchor = KEYWORD.test(query) ? query : `${query} act`;
+      const [broad, narrow] = await Promise.all([
+        frl.searchTitles(query, 'name', 'all', 100),
+        frl.searchTitles(anchor, 'name', 'startswith', 100, true).catch(() => EMPTY),
+      ]);
+      let pool = [...narrow.titles, ...broad.titles];
       let note = '';
-      if (result.count === 0) {
-        result = await frl.searchTitles(query, 'nameAndText', 'all', 50);
+      if (pool.length === 0) {
+        const text = await frl.searchTitles(query, 'nameAndText', 'all', 50);
+        pool = text.titles;
         note = 'No title-name match; showing full-text matches instead.\n\n';
+        if (pool.length === 0) return `No titles match "${query}" on the register.`;
       }
-      if (result.count === 0) return `No titles match "${query}" on the register.`;
-      // The register's name search returns a flat relevance for every title
-      // containing the words, so amendment acts drown out the principal act;
-      // rank locally instead.
-      const wanted = query.trim().replace(/\s+/g, ' ').toLowerCase();
+      const seen = new Set<string>();
+      const unique = pool.filter((t) => !seen.has(t.id) && seen.add(t.id));
+      const principal = new RegExp(
+        `^${wanted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} (act|regulations?|rules|code|determination)\\b.*\\d{4}$`,
+        'i',
+      );
       const score = (t: frl.Title) => {
         const name = t.name.replace(/\s+/g, ' ').toLowerCase();
         return (
           (name === wanted ? 1000 : 0) +
-          (name.startsWith(wanted) ? 50 : 0) +
+          (principal.test(name) ? 500 : 0) +
           (t.isPrincipal ? 100 : 0) +
+          (name.startsWith(wanted) ? 50 : 0) +
           (t.isInForce ? 10 : 0) -
           name.length / 1000
         );
       };
-      const ranked = [...result.titles].sort((a, b) => score(b) - score(a)).slice(0, limit);
+      const ranked = [...unique].sort((a, b) => score(b) - score(a)).slice(0, limit);
       const rows = ranked.map((t) => `${t.id}  ${t.name}  [${statusLabel(t)}]`);
-      return `${note}${result.count} matches (showing ${rows.length}):\n${rows.join('\n')}`;
+      // The register will not filter or order this search usefully, so say how
+      // much of it was actually ranked rather than implying all of it was.
+      const scope =
+        broad.count > unique.length
+          ? `${broad.count} titles match "${query}"; ranked the ${unique.length} the register returned first`
+          : `${unique.length} titles match "${query}"`;
+      return `${note}${scope} (showing ${rows.length}):\n${rows.join('\n')}`;
     }),
   );
 
@@ -203,10 +276,12 @@ export function createServer(): McpServer {
       if (!version) return `No version of ${titleId} found on the register.`;
       const act = await loadAct(version);
       let body: string;
-      if (args.section) {
+      if (act.provisions.length === 0) {
+        body = unparsed(version);
+      } else if (args.section) {
         body = provisionText(act, args.section as string) ?? missingSection(act, args.section as string);
       } else if (args.full) {
-        body = act.provisions.map((p) => `${label(p)}  ${p.heading}\n${p.body}`).join('\n\n');
+        body = fullText(act);
       } else {
         body = `Table of sections (pass section="..." for text):\n${tocOf(act)}`;
       }
@@ -242,10 +317,12 @@ export function createServer(): McpServer {
       }
       const act = await loadAct(version, date);
       let body: string;
-      if (args.section) {
+      if (act.provisions.length === 0) {
+        body = unparsed(version);
+      } else if (args.section) {
         body = provisionText(act, args.section as string) ?? missingSection(act, args.section as string);
       } else if (args.full) {
-        body = act.provisions.map((p) => `${label(p)}  ${p.heading}\n${p.body}`).join('\n\n');
+        body = fullText(act);
       } else {
         body = `Table of sections as at ${date} (pass section="..." for text):\n${tocOf(act)}`;
       }
@@ -278,7 +355,10 @@ export function createServer(): McpServer {
       if (version) {
         lines.push('');
         lines.push(
-          `Latest compilation: No. ${version.compilationNumber ?? '?'} (${version.registerId}), in force from ${version.start.slice(0, 10)}.`,
+          `Latest compilation: No. ${version.compilationNumber ?? '?'} (${version.registerId}), in force from ` +
+            version.start.slice(0, 10) +
+            (version.end ? ` to ${version.end.slice(0, 10)}` : '') +
+            '.',
         );
         for (const r of version.reasons ?? []) {
           if (r.affectedByTitle) {
@@ -314,6 +394,7 @@ export function createServer(): McpServer {
         dateA: z.string().describe('yyyy-mm-dd, the earlier date'),
         dateB: z.string().describe('yyyy-mm-dd, the later date'),
         section: z.string().optional(),
+        page: z.number().int().min(1).optional(),
       }),
       annotations: readOnly,
     },
@@ -321,6 +402,11 @@ export function createServer(): McpServer {
       const titleId = args.titleId as string;
       const dateA = frl.assertDate(args.dateA as string);
       const dateB = frl.assertDate(args.dateB as string);
+      // Added and removed are read off the direction of travel, so taking the
+      // dates in the wrong order would report every insertion as a repeal.
+      if (dateA > dateB) {
+        throw new Error(`dateA (${dateA}) must be on or before dateB (${dateB}), or the changes are reported backwards`);
+      }
       const [va, vb] = await Promise.all([frl.findVersion(titleId, dateA), frl.findVersion(titleId, dateB)]);
       if (!va || !vb) {
         return `No version in force on ${!va ? dateA : dateB} for ${titleId}.`;
@@ -333,6 +419,12 @@ export function createServer(): McpServer {
         return `${intro}\n\nSame compilation was in force on both dates — no textual change between them.`;
       }
       const [actA, actB] = await Promise.all([loadAct(va, dateA), loadAct(vb, dateB)]);
+      // Diffing against an empty side would present the entire act as newly
+      // enacted, which reads as a sweeping amendment that never happened.
+      if (actA.provisions.length === 0 || actB.provisions.length === 0) {
+        const side = actA.provisions.length === 0 ? va : vb;
+        return `${intro}\n\n${unparsed(side)}\nNo comparison is possible while one side cannot be read.`;
+      }
       if (args.section) {
         const a = findProvision(actA, args.section as string);
         const b = findProvision(actB, args.section as string);
@@ -344,7 +436,8 @@ export function createServer(): McpServer {
         const rendered = changed
           ? diff.map((d) => `${d.kind} ${d.text}`).join('\n')
           : 'No change to this section between the two dates.';
-        return `${intro}\n\ns ${args.section}:\n${rendered}\n\n${attribution()}`;
+        const page = paginate(`${label(a)}:\n${rendered}`, args.page as number | undefined);
+        return `${intro}\n\n${page}\n\n${attribution()}`;
       }
       const byNo = (act: ActText) => new Map(act.provisions.map((p) => [p.no, p]));
       const mapA = byNo(actA);
@@ -354,17 +447,18 @@ export function createServer(): McpServer {
       const changed: string[] = [];
       for (const [no, p] of mapB) {
         const old = mapA.get(no);
-        if (!old) added.push(`+ s ${no}  ${p.heading}`);
-        else if (old.body !== p.body || old.heading !== p.heading) changed.push(`~ s ${no}  ${p.heading}`);
+        if (!old) added.push(`+ ${label(p)}  ${p.heading}`);
+        else if (old.body !== p.body || old.heading !== p.heading) changed.push(`~ ${label(p)}  ${p.heading}`);
       }
       for (const [no, p] of mapA) {
-        if (!mapB.has(no)) removed.push(`- s ${no}  ${p.heading}`);
+        if (!mapB.has(no)) removed.push(`- ${label(p)}  ${p.heading}`);
       }
       const summary =
         added.length + removed.length + changed.length === 0
           ? 'Different compilations, but no change at section level (formatting or endnote changes only).'
           : [...added, ...removed, ...changed].join('\n');
-      return `${intro}\n\n${summary}\n\nPass section="..." for a line-by-line diff.\n\n${attribution()}`;
+      const page = paginate(summary, args.page as number | undefined);
+      return `${intro}\n\n${page}\n\nPass section="..." for a line-by-line diff.\n\n${attribution()}`;
     }),
   );
 
@@ -428,6 +522,9 @@ export function createServer(): McpServer {
             const version = await frl.findVersion(title.id);
             if (!version) throw new Error('no current version on the register');
             const act = await loadAct(version);
+            // Reporting a real provision as missing because the parse came
+            // back empty is the one answer this tool promises never to give.
+            if (act.provisions.length === 0) throw new Error(unparsed(version));
             for (const sec of citation.sections) {
               const p = findProvision(act, sec);
               out.push(
@@ -437,7 +534,10 @@ export function createServer(): McpServer {
               );
             }
           } catch (e) {
-            out.push(`  [UNVERIFIED] sections ${citation.sections.join(', ')} — could not load the act text (${e instanceof Error ? e.message : e}).`);
+            out.push(
+              `  [UNVERIFIED] sections ${citation.sections.join(', ')} — could not check them ` +
+                `(${e instanceof Error ? e.message : e}). Do not treat them as nonexistent.`,
+            );
           }
         }
       }
