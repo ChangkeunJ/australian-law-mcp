@@ -162,6 +162,46 @@ test('an as-made scan with no markup is read from its own numbering', () => {
   assert.match(findProvision(act, 'Schedule').body, /Form of application/);
 });
 
+// From about 2004 the section-number span carries a style attribute, so the
+// class is no longer immediately followed by ">".
+test('a styled CharSectno span is still read', () => {
+  const styled =
+    '<p class="ActHead5"><span class="CharSectno" style="font-size:12pt">7</span>' +
+    '<span>&#xa0; </span><span>Powers</span></p>' +
+    '<p class="subsection"><span>The body.</span></p>';
+  const p = findProvision(parseAct(styled), '7');
+  assert.ok(p, 'a CharSectno span with a style attribute must not be missed');
+  assert.equal(p.heading, 'Powers');
+});
+
+// The agency-template generation marks structure with LI-Heading classes and
+// no CharSectno; the number is the first token of the heading text.
+test('the agency-template (LI-Heading) generation is parsed', () => {
+  const li = `<p class="LI-Title"><span>ASIC Instrument 2023/956</span></p>
+    <p class="LI-Heading1"><span>Part 1—Preliminary</span></p>
+    <p class="LI-Heading2"><span>1 Name of legislative instrument</span></p>
+    <p class="LI-BodyTextUnnumbered"><span>This is the ASIC ... Instrument 2023/956.</span></p>
+    <p class="LI-Heading2"><span>4 Terms of declaration</span></p>
+    <p class="LI-BodyTextUnnumbered"><span>The terms are as follows.</span></p>`;
+  const act = parseAct(li);
+  assert.ok(findProvision(act, '1'), 'a numbered LI-Heading2 must become an addressable section');
+  assert.equal(findProvision(act, '1').heading, 'Name of legislative instrument');
+  assert.equal(findProvision(act, '1').context, 'Part 1—Preliminary');
+  assert.match(findProvision(act, '4').body, /terms are as follows/);
+});
+
+test('a statutory-rules banner "YYYY. No. N." is not read as section YYYY', () => {
+  const sr = `<p><span>ELECTION RULES.</span></p>
+    <p><span>1904. No. 2.</span></p>
+    <p><span>Short title.</span></p>
+    <p><span>1. These Rules may be cited as the Election Rules.</span></p>
+    <p><span>Interpretation.</span></p>
+    <p><span>2. In these Rules a word means a thing.</span></p>`;
+  const act = parseAct(sr);
+  assert.equal(act.provisions[0]?.no, '1', 'the year banner must not lock in as section 1904');
+  assert.ok(findProvision(act, '2'), 'the real sections must survive');
+});
+
 test('unstructured text that does not open at section 1 is declined, not guessed', () => {
   // Compilation notes: numbers that look like sections but are not.
   const notes = `<p><span>Schedule................</span></p>
