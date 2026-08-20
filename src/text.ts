@@ -64,7 +64,9 @@ export interface Block {
   text: string;
 }
 
-const SECTNO_SPAN = /<span class="CharSectno">([\s\S]*?)<\/span>/g;
+// From about 2004 the generator started stamping a style attribute onto the
+// section-number span, so the class is no longer immediately followed by ">".
+const SECTNO_SPAN = /<span class="CharSectno"[^>]*>([\s\S]*?)<\/span>/g;
 
 export function htmlBlocks(html: string): Block[] {
   const blocks: Block[] = [];
@@ -103,6 +105,10 @@ export function epubToHtml(epub: Uint8Array): string {
 
 const SKIP = /^(TOC\d*|Header|ShortT|Tabbing|UpdateDate)$/;
 const SCHEDULE = /^(Schedule\s*[\w]+)\s*(?:[—–-]\s*)?(.*)$/i;
+// A section number sitting at the front of heading text rather than in its own
+// span (the agency-template generation) — up to a long letter suffix like
+// 159GZZZZH and an ITAA-style "995-1".
+const LEADING_NO = /^(\d+[A-Z]{0,8}(?:[-‑.]\d+[A-Z]{0,8})?)\s+(.+)$/;
 // Where the operative text stops and the compilation's own notes begin. The
 // modern generation opens them with ENote*; the older one opens them with
 // "Notes to the <act>" and then runs tables of acts and amendments.
@@ -130,6 +136,29 @@ function parseDocument(html: string, provisions: Provision[], endnoteLines: stri
     }
     if (inEndnotes) {
       if (block.text) endnoteLines.push(block.text);
+      continue;
+    }
+
+    // The agency-template generation marks structure with LI-Heading classes
+    // and no CharSectno; the section number is the first token of the heading.
+    if (/^LI-Heading[1-6]$/.test(block.cls)) {
+      const schedule = SCHEDULE.exec(block.text);
+      if (schedule) {
+        context.length = 0;
+        inSchedule = true;
+        current = open((schedule[1] ?? block.text).replace(/\s+/g, ' '), schedule[2] ?? '');
+        continue;
+      }
+      const numbered = LEADING_NO.exec(block.text);
+      if (numbered) {
+        inSchedule = false;
+        current = open(numbered[1]!, numbered[2]!);
+        continue;
+      }
+      context.length = 0;
+      context[0] = block.text;
+      inSchedule = false;
+      current = null;
       continue;
     }
 
@@ -198,7 +227,11 @@ function parseFlatDocument(html: string): Provision[] {
     const text = texts[i]!;
     if (schedules === 0) {
       const m = FLAT_SECTION.exec(text);
-      if (m && (last === '' || sortsAfter(last, m[1]!))) {
+      // An as-made act opens at section 1. Requiring the first accepted number
+      // to be exactly "1" steps over the statutory-rules banner "1904. No. 2.",
+      // which otherwise gets locked in as section 1904 and makes every real
+      // section fail the ascending-order test.
+      if (m && (last === '' ? m[1] === '1' : sortsAfter(last, m[1]!))) {
         opens.set(i, m[1]!);
         last = m[1]!;
         sections++;
@@ -207,8 +240,10 @@ function parseFlatDocument(html: string): Provision[] {
     }
     // The word "Schedules" also appears in these documents' tables of contents
     // and in compilation notes, either of which would otherwise swallow the
-    // rest of the act. A real schedule comes after the sections.
-    if (sections >= 2 && text.length < 60 && FLAT_SCHEDULE.test(text)) {
+    // rest of the act. A real schedule comes after the sections, and a
+    // "(continued)" banner is the same schedule spilling onto the next page,
+    // not a new one.
+    if (sections >= 2 && text.length < 60 && FLAT_SCHEDULE.test(text) && !/contin/i.test(text)) {
       opens.set(i, `Schedule${schedules === 0 ? '' : ` ${schedules + 1}`}`);
       schedules++;
     }
