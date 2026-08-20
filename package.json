@@ -1,6 +1,6 @@
 {
   "name": "australian-law-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "MCP server for the Federal Register of Legislation: search Australian Commonwealth law, read it as it stood on any date, and check citations against the official register",
   "license": "MIT",
   "mcpName": "io.github.ChangkeunJ/australian-law-mcp",
