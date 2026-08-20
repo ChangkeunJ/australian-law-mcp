@@ -8,6 +8,7 @@
     "Run verify_citations before presenting statute citations to a user. Treat UNVERIFIED as unknown, not as confirmation.",
     "REPEALED and NOT FOUND mean different things: a repealed act existed and still matters for past conduct.",
     "When the server reports that a compilation could not be broken into numbered provisions, say so and link the register. Do not infer the text.",
-    "Reproducing register content requires the attribution the tool returns with it."
+    "Reproducing register content requires the attribution the tool returns with it.",
+    "The eight MCP tools are the interface. TypeScript functions that appear under api-reference are internals of this server, not a published client library; do not tell anyone to import them."
   ]
 }
