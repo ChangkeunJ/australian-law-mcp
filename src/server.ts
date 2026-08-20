@@ -4,8 +4,9 @@ import * as frl from './frl.js';
 import { parseCitations } from './cite.js';
 import {
   type ActText,
+  type Provision,
   diffLines,
-  epubToHtml,
+  epubDocuments,
   findProvision,
   nearest,
   parseAct,
@@ -47,18 +48,20 @@ function statusLabel(t: frl.Title): string {
   return bits.filter(Boolean).join(', ');
 }
 
+// Keyed by register id, not by title and date: a register id names one
+// immutable compilation, so a newly published compilation can never be served
+// under the previous one's text.
 const actCache = new Map<string, ActText>();
 
-async function loadAct(titleId: string, asAt?: string): Promise<ActText> {
-  const key = `${titleId}@${asAt ?? 'latest'}`;
-  const hit = actCache.get(key);
+async function loadAct(version: frl.Version, asAt?: string): Promise<ActText> {
+  const hit = actCache.get(version.registerId);
   if (hit) return hit;
-  const act = parseAct(epubToHtml(await frl.getEpub(titleId, asAt)));
-  if (actCache.size > 12) {
+  const act = parseAct(epubDocuments(await frl.getEpub(version.titleId, asAt)));
+  if (actCache.size > 8) {
     const oldest = actCache.keys().next().value;
     if (oldest !== undefined) actCache.delete(oldest);
   }
-  actCache.set(key, act);
+  actCache.set(version.registerId, act);
   return act;
 }
 
@@ -76,25 +79,37 @@ function versionHeader(v: frl.Version): string {
   return lines.join('\n');
 }
 
+// Schedules are provisions too, but they are cited by name rather than as
+// "section N".
+function label(p: Provision): string {
+  return /^Schedule/i.test(p.no) ? p.no : `s ${p.no}`;
+}
+
+function counts(act: ActText): string {
+  const schedules = act.provisions.filter((p) => /^Schedule/i.test(p.no)).length;
+  const sections = act.provisions.length - schedules;
+  return schedules > 0 ? `${sections} sections and ${schedules} schedules` : `${sections} sections`;
+}
+
 function tocOf(act: ActText): string {
-  if (act.provisions.length === 0) return 'No numbered sections found in this document.';
-  return act.provisions.map((p) => `s ${p.no}  ${p.heading}`).join('\n');
+  if (act.provisions.length === 0) return 'No numbered provisions found in this document.';
+  return act.provisions.map((p) => `${label(p)}  ${p.heading}`).join('\n');
 }
 
 function provisionText(act: ActText, section: string): string | null {
   const p = findProvision(act, section);
   if (!p) return null;
   const head = p.context ? `${p.context}\n` : '';
-  return `${head}s ${p.no}  ${p.heading}\n\n${p.body}`;
+  return `${head}${label(p)}  ${p.heading}\n\n${p.body}`;
 }
 
 function missingSection(act: ActText, section: string): string {
   const close = nearest(act, section)
-    .map((p) => `s ${p.no} (${p.heading})`)
+    .map((p) => `${label(p)} (${p.heading})`)
     .join(', ');
   return (
-    `Section ${section} was not found in this compilation. ` +
-    `It has ${act.provisions.length} numbered sections. Closest by number: ${close}.`
+    `Provision ${section} was not found in this compilation. ` +
+    `It has ${counts(act)}. Closest by number: ${close}.`
   );
 }
 
@@ -138,7 +153,7 @@ export function createServer(): McpServer {
       annotations: readOnly,
     },
     tool(async (args) => {
-      const query = args.query as string;
+      const query = (args.query as string).replace(/[,;:]+/g, ' ').replace(/\s+/g, ' ').trim();
       const limit = (args.limit as number | undefined) ?? 10;
       let result = await frl.searchTitles(query, 'name', 'all', 50);
       let note = '';
@@ -186,12 +201,12 @@ export function createServer(): McpServer {
       const titleId = args.titleId as string;
       const version = await frl.findVersion(titleId);
       if (!version) return `No version of ${titleId} found on the register.`;
-      const act = await loadAct(titleId);
+      const act = await loadAct(version);
       let body: string;
       if (args.section) {
         body = provisionText(act, args.section as string) ?? missingSection(act, args.section as string);
       } else if (args.full) {
-        body = act.provisions.map((p) => `s ${p.no}  ${p.heading}\n${p.body}`).join('\n\n');
+        body = act.provisions.map((p) => `${label(p)}  ${p.heading}\n${p.body}`).join('\n\n');
       } else {
         body = `Table of sections (pass section="..." for text):\n${tocOf(act)}`;
       }
@@ -220,18 +235,17 @@ export function createServer(): McpServer {
       const date = frl.assertDate(args.date as string);
       const version = await frl.findVersion(titleId, date);
       if (!version) {
-        const versions = await frl.listVersions(titleId, 200);
-        const earliest = versions[versions.length - 1];
+        const earliest = await frl.earliestVersion(titleId);
         return earliest
           ? `No version of ${titleId} was in force on ${date}. The earliest version on the register starts ${earliest.start.slice(0, 10)}.`
           : `No versions of ${titleId} found on the register.`;
       }
-      const act = await loadAct(titleId, date);
+      const act = await loadAct(version, date);
       let body: string;
       if (args.section) {
         body = provisionText(act, args.section as string) ?? missingSection(act, args.section as string);
       } else if (args.full) {
-        body = act.provisions.map((p) => `s ${p.no}  ${p.heading}\n${p.body}`).join('\n\n');
+        body = act.provisions.map((p) => `${label(p)}  ${p.heading}\n${p.body}`).join('\n\n');
       } else {
         body = `Table of sections as at ${date} (pass section="..." for text):\n${tocOf(act)}`;
       }
@@ -318,7 +332,7 @@ export function createServer(): McpServer {
       if (va.registerId === vb.registerId) {
         return `${intro}\n\nSame compilation was in force on both dates — no textual change between them.`;
       }
-      const [actA, actB] = await Promise.all([loadAct(titleId, dateA), loadAct(titleId, dateB)]);
+      const [actA, actB] = await Promise.all([loadAct(va, dateA), loadAct(vb, dateB)]);
       if (args.section) {
         const a = findProvision(actA, args.section as string);
         const b = findProvision(actB, args.section as string);
@@ -397,26 +411,28 @@ export function createServer(): McpServer {
           out.push(`[NO MATCH] ${citation.act} — no such title found on the Federal Register of Legislation.`);
           continue;
         }
-        const label = fuzzy ? ` (closest register title, not an exact name match)` : '';
+        const nameNote = fuzzy ? ` (closest register title, not an exact name match)` : '';
         if (!title.isInForce) {
           const repeal = (title.statusHistory ?? []).find((s) => s.status !== 'InForce');
           const why = repeal?.reasons?.[0]?.affectedByTitle
             ? ` by ${repeal.reasons[0].affectedByTitle.name}`
             : '';
           out.push(
-            `[${title.status.toUpperCase()}] ${title.name} [${title.id}]${label} — no longer in force${why}. A citation to it can only be historical.`,
+            `[${title.status.toUpperCase()}] ${title.name} [${title.id}]${nameNote} — no longer in force${why}. A citation to it can only be historical.`,
           );
         } else {
-          out.push(`[OK] ${title.name} [${title.id}]${label} — in force.`);
+          out.push(`[OK] ${title.name} [${title.id}]${nameNote} — in force.`);
         }
         if (citation.sections.length > 0) {
           try {
-            const act = await loadAct(title.id);
+            const version = await frl.findVersion(title.id);
+            if (!version) throw new Error('no current version on the register');
+            const act = await loadAct(version);
             for (const sec of citation.sections) {
               const p = findProvision(act, sec);
               out.push(
                 p
-                  ? `  [OK] s ${p.no} exists: "${p.heading}"`
+                  ? `  [OK] ${label(p)} exists: "${p.heading}"`
                   : `  [NOT FOUND] s ${sec} — ${missingSection(act, sec)}`,
               );
             }
