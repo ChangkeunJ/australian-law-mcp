@@ -33,6 +33,8 @@
     "type": "git",
     "url": "git+https://github.com/ChangkeunJ/australian-law-mcp.git"
   },
+  "homepage": "https://github.com/ChangkeunJ/australian-law-mcp#readme",
+  "bugs": "https://github.com/ChangkeunJ/australian-law-mcp/issues",
   "keywords": [
     "mcp",
     "model-context-protocol",

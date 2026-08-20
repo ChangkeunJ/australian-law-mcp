@@ -31,7 +31,9 @@ Claude Desktop, Cursor, or any other stdio MCP client:
 }
 ```
 
-Requires Node 20 or newer.
+Requires Node 20 or newer. The `npx` recipes above resolve the package once it
+is on npm; until then, clone this repository, run `npm install && npm run build`,
+and point the client's `command` at `node` with `args` `["/path/to/dist/index.js"]`.
 
 ## Tools
 
@@ -65,7 +67,8 @@ inventing sections that were never enacted:
 verify_citations text="See s 3A and s 999 of the Income Tax Rates Act 1986."
 → [OK] Income Tax Rates Act 1986 [C2004A03348] — in force.
     [OK] s 3A exists: "Working holiday makers and working holiday taxable income"
-    [NOT FOUND] s 999 — this compilation has 28 numbered sections; closest: s 30, s 29, s 28
+    [NOT FOUND] s 999 — Provision 999 was not found in this compilation. It has
+      28 sections and 6 schedules. Closest by number: s 30, s 29, s 28
 ```
 
 A real law reported missing is the worst failure a tool like this can have, so
@@ -94,8 +97,9 @@ changes, the scope can grow.
 
 Legislative content comes from the Federal Register of Legislation API and is
 licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) by the
-Commonwealth of Australia; every response carries the register's required
-attribution. This project is independent: not affiliated with or endorsed by
+Commonwealth of Australia; every response that reproduces register content
+carries the register's required attribution. This project is independent: not
+affiliated with or endorsed by
 the Office of Parliamentary Counsel or the Australian Government. Output is
 legal information, not legal advice — the authorised version of any law is the
 one published on the register.
