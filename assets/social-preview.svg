@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <rect width="1280" height="640" fill="#0d1117"/>
+  <rect x="0" y="0" width="1280" height="6" fill="#1f6feb"/>
+
+  <text x="80" y="150" font-family="DejaVu Sans Mono" font-size="62" fill="#e6edf3">australian-law-mcp</text>
+
+  <text x="80" y="245" font-family="DejaVu Sans" font-size="42" fill="#c9d1d9">Australian Commonwealth law,</text>
+  <text x="80" y="300" font-family="DejaVu Sans" font-size="42" fill="#c9d1d9">as it stood on any date since 1901.</text>
+
+  <rect x="80" y="360" width="1120" height="150" rx="10" fill="#161b22" stroke="#30363d" stroke-width="2"/>
+  <text x="112" y="414" font-family="DejaVu Sans Mono" font-size="27"><tspan fill="#8b949e">get_law_as_at(</tspan><tspan fill="#a5d6ff">"C1958A00062"</tspan><tspan fill="#8b949e">, </tspan><tspan fill="#a5d6ff">"2014-12-16"</tspan><tspan fill="#8b949e">)</tspan></text>
+  <text x="112" y="464" font-family="DejaVu Sans Mono" font-size="27"><tspan fill="#58a6ff">Migration Act 1958</tspan><tspan fill="#8b949e"> — Compilation No. 119, in force 16 Dec 2014</tspan></text>
+
+  <text x="80" y="578" font-family="DejaVu Sans" font-size="26" fill="#6e7681">Federal Register of Legislation  ·  no API key  ·  MIT  ·  npx -y australian-law-mcp</text>
+</svg>
