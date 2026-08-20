@@ -63,5 +63,37 @@ assert.match(asAt.result.content[0].text, /Compilation No\. 48/);
 assert.match(asAt.result.content[0].text, /working holiday maker/i);
 console.log('ok  get_law_as_at: s 3A as at 2017-01-05 served from Compilation No. 48');
 
+const schedule = await rpc('tools/call', {
+  name: 'get_law_text',
+  arguments: { titleId: 'C2004A03348', section: 'Schedule 7' },
+});
+assert.match(schedule.result.content[0].text, /exceeds \$45,000/);
+console.log('ok  get_law_text: Schedule 7 returns the rate table');
+
+const dashed = await rpc('tools/call', {
+  name: 'verify_citations',
+  arguments: { text: 'The Tax Agent Services Act 2009, ss 50-5 and 90-5, defines the service.' },
+});
+// The register prints section numbers with a non-breaking hyphen; the caller
+// typed an ordinary one and both must resolve to the same provision.
+const dashedText = dashed.result.content[0].text.replace(/[‐‑–—]/g, '-');
+assert.match(dashedText, /\[OK\] s 50-5 exists/);
+assert.match(dashedText, /\[OK\] s 90-5 exists/);
+console.log('ok  verify_citations: dashed section numbers resolve against the register');
+
+const badDate = await rpc('tools/call', {
+  name: 'get_law_as_at',
+  arguments: { titleId: 'C2004A03348', date: '2017-13-45' },
+});
+assert.match(badDate.result.content[0].text, /not a real calendar date/);
+console.log('ok  get_law_as_at: an impossible date is rejected, not answered');
+
+const early = await rpc('tools/call', {
+  name: 'get_law_as_at',
+  arguments: { titleId: 'C1936A00027', date: '1930-01-01' },
+});
+assert.match(early.result.content[0].text, /earliest version on the register starts 1936-06-02/);
+console.log('ok  get_law_as_at: pre-commencement date reports the true earliest version');
+
 child.kill();
 console.log('protocol test passed');

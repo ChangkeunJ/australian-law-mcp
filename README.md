@@ -38,7 +38,7 @@ Requires Node 20 or newer.
 | tool | what it does |
 | --- | --- |
 | `search_law` | Find acts and instruments by name. Returns the title ids the other tools take. |
-| `get_law_text` | The current compilation: table of sections, one provision, or the full text paginated. |
+| `get_law_text` | The current compilation: the table of provisions, one section, or the full text paginated. Schedules are addressable too (`section="Schedule 7"`), which is where rate tables and forms actually live. |
 | `get_law_as_at` | The same, but as the law stood on any past date. |
 | `verify_citations` | Pull statute citations out of text and check each against the register: does the act exist, is it in force, does the cited section exist. Upstream failures come back as UNVERIFIED, never as a missing law. |
 | `get_amendment_status` | In force or repealed, what the latest compilation incorporates, whether commenced amendments are still unincorporated, and what has amended it. |
@@ -68,9 +68,10 @@ verify_citations text="See s 3A and s 999 of the Income Tax Rates Act 1986."
     [NOT FOUND] s 999 — this compilation has 28 numbered sections; closest: s 30, s 29, s 28
 ```
 
-A real law reported missing is the worst failure a tool like this can have,
-so network and API errors are always reported as UNVERIFIED rather than
-NOT FOUND.
+A real law reported missing is the worst failure a tool like this can have, so
+network and API errors are always reported as UNVERIFIED rather than NOT FOUND,
+and a section is only checked against an act when the citation actually binds
+the two together.
 
 ## Scope
 
