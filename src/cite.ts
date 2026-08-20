@@ -14,8 +14,11 @@ export interface Citation {
 
 const JURISDICTION = String.raw`\s+\((?:Cth|NSW|Vic|Qld|SA|WA|Tas|NT|ACT)\)`;
 const WORD = String.raw`[A-Z][\w'’()–-]*,?`;
+// "(No. 2)" between the keyword and the year is a naming convention the
+// register uses heavily (Appropriation Act (No. 3) 2003-2004).
+const SERIAL = String.raw`(?:\s+\(No\.?\s*\d+\))?`;
 const ACT_NAME = new RegExp(
-  String.raw`\b((?:A |An |The )?(?:${WORD}(?:\s+(?:[a-z]{1,3}|${WORD}|\([^)]{1,60}\)))*?)\s+(?:Act|Regulations?|Rules|Code|Determination)\s+\d{4})(?:${JURISDICTION})?`,
+  String.raw`\b((?:A |An |The )?(?:${WORD}(?:\s+(?:[a-z]{1,3}|${WORD}|\([^)]{1,60}\)))*?)\s+(?:Act|Regulations?|Rules|Code|Determination)${SERIAL}\s+\d{4})(?:${JURISDICTION})?`,
   'g',
 );
 
