@@ -11,7 +11,7 @@
     "build": "tsc",
     "check": "node scripts/check.mjs",
     "smoke": "tsc && node scripts/smoke.mjs",
-    "test": "tsc && node --test test/",
+    "test": "tsc && node --test test/*.test.mjs",
     "prepublishOnly": "npm test && node scripts/check.mjs"
   },
   "engines": {
