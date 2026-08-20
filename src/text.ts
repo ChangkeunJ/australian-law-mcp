@@ -2,10 +2,19 @@
 //
 // The register serves whole-document epubs only (no provision endpoint), but
 // the generated XHTML is regular: every piece of content is a <p> whose class
-// says what it is. Sections start at <p class="ActHead5"> with the section
-// number in <span class="CharSectno">; parts/divisions/chapters use
-// ActHead1-4 with CharPartNo/CharDivNo/CharChapNo spans. Endnotes (ENote*)
-// carry the amendment history tables and end the operative text.
+// says what it is.
+//
+// Quirks that the parsing has to survive, all confirmed against live epubs:
+// - a section number is split across consecutive <span class="CharSectno">
+//   spans, so "50-5" arrives as "50", U+2011, "5" and must be rejoined
+// - the dash inside a section number is a non-breaking hyphen (U+2011), not
+//   the hyphen a caller will type
+// - Schedules carry operative content (the rate tables live there) under
+//   ActHead1/ActHead2 headings with no section numbers at all
+// - statutory formulas are images whose alt text is the formula
+// - a multi-volume epub is several document_N.html files that the register
+//   does not order logically, each with its own endnotes, so the endnote
+//   latch has to reset per document
 
 import { unzipSync } from 'fflate';
 
@@ -39,49 +48,64 @@ export function decodeEntities(s: string): string {
 }
 
 function textOf(inner: string): string {
-  return decodeEntities(inner.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+  const withFormulas = inner.replace(/<img\b[^>]*?\balt="([^"]*)"[^>]*>/gi, ' $1 ');
+  return decodeEntities(withFormulas.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
 }
 
-interface Block {
+export interface Block {
   cls: string;
   sectNo: string | null;
+  heading: string;
   text: string;
 }
 
+const SECTNO_SPAN = /<span class="CharSectno">([\s\S]*?)<\/span>/g;
+
 export function htmlBlocks(html: string): Block[] {
   const blocks: Block[] = [];
-  const re = /<p\b([^>]*)>([\s\S]*?)<\/p>/g;
+  const re = /<p\b([^>]*?)(?:\/>|>([\s\S]*?)<\/p>)/g;
   for (let m = re.exec(html); m; m = re.exec(html)) {
     const attrs = m[1] ?? '';
     const inner = m[2] ?? '';
     const cls = /class="([^"]*)"/.exec(attrs)?.[1] ?? '';
-    const sect = /<span class="CharSectno">([\s\S]*?)<\/span>/.exec(inner);
+    const parts = [...inner.matchAll(SECTNO_SPAN)].map((s) => textOf(s[1] ?? ''));
+    const sectNo = parts.length > 0 ? parts.join('') : null;
     const text = textOf(inner);
-    if (!text && !sect) continue;
-    blocks.push({ cls, sectNo: sect ? textOf(sect[1] ?? '') || null : null, text });
+    const heading = textOf(inner.replace(SECTNO_SPAN, ''));
+    if (!text && !sectNo) continue;
+    blocks.push({ cls, sectNo: sectNo || null, heading, text });
   }
   return blocks;
 }
 
-export function epubToHtml(epub: Uint8Array): string {
+export function epubDocuments(epub: Uint8Array): string[] {
   const files = unzipSync(epub);
-  const docs = Object.keys(files)
+  const names = Object.keys(files)
     .filter((n) => /^OEBPS\/document_\d+\/document_\d+\.html$/.test(n))
     .sort((a, b) => Number(/_(\d+)\//.exec(a)?.[1]) - Number(/_(\d+)\//.exec(b)?.[1]));
-  if (docs.length === 0) throw new Error('no document html found inside the epub');
+  if (names.length === 0) throw new Error('no document html found inside the epub');
   const decoder = new TextDecoder();
-  return docs.map((n) => decoder.decode(files[n])).join('\n');
+  return names.map((n) => decoder.decode(files[n]));
 }
 
-const HEAD_CONTEXT = /^ActHead[1-4]$/;
-const SKIP = /^(TOC\d*|Header|ShortT|Tabbing)$/;
+export function epubToHtml(epub: Uint8Array): string {
+  return epubDocuments(epub).join('\n');
+}
 
-export function parseAct(html: string): ActText {
-  const provisions: Provision[] = [];
-  const endnoteLines: string[] = [];
+const SKIP = /^(TOC\d*|Header|ShortT|Tabbing)$/;
+const SCHEDULE = /^(Schedule\s*[\w]+)\s*(?:[—–-]\s*)?(.*)$/i;
+
+function parseDocument(html: string, provisions: Provision[], endnoteLines: string[]): void {
   const context: string[] = [];
   let current: Provision | null = null;
+  let inSchedule = false;
   let inEndnotes = false;
+
+  function open(no: string, heading: string): Provision {
+    const p: Provision = { no, heading, context: context.filter(Boolean).join(' > '), body: '' };
+    provisions.push(p);
+    return p;
+  }
 
   for (const block of htmlBlocks(html)) {
     if (SKIP.test(block.cls)) continue;
@@ -95,33 +119,59 @@ export function parseAct(html: string): ActText {
       if (block.text) endnoteLines.push(block.text);
       continue;
     }
-    if (HEAD_CONTEXT.test(block.cls)) {
-      const depth = Number(block.cls.slice(-1));
+
+    const head = /^ActHead([1-5])$/.exec(block.cls);
+    if (head) {
+      const depth = Number(head[1]);
+      if (depth === 5 && block.sectNo) {
+        current = open(block.sectNo, block.heading);
+        continue;
+      }
+      const schedule = depth === 1 ? SCHEDULE.exec(block.text) : null;
+      if (schedule) {
+        // A Schedule is where rate tables and forms live; treat the whole
+        // schedule as one addressable provision rather than dropping it.
+        context.length = 0;
+        inSchedule = true;
+        current = open((schedule[1] ?? block.text).replace(/\s+/g, ' '), schedule[2] ?? '');
+        continue;
+      }
+      if (inSchedule && depth > 1) {
+        // Parts and Divisions inside a schedule are section-less headings, so
+        // they belong in the schedule body.
+        if (current && block.text) current.body += (current.body ? '\n' : '') + block.text;
+        continue;
+      }
       context.length = depth - 1;
       context[depth - 1] = block.text;
+      inSchedule = false;
       current = null;
       continue;
     }
-    if (block.cls === 'ActHead5' && block.sectNo) {
-      const heading = block.text.replace(block.sectNo, '').replace(/^\s*/, '').trim();
-      current = {
-        no: block.sectNo,
-        heading,
-        context: context.filter(Boolean).join(' > '),
-        body: '',
-      };
-      provisions.push(current);
-      continue;
-    }
+
     if (current && block.text) {
       current.body += (current.body ? '\n' : '') + block.text;
     }
   }
+}
+
+export function parseAct(html: string | string[]): ActText {
+  const provisions: Provision[] = [];
+  const endnoteLines: string[] = [];
+  for (const doc of Array.isArray(html) ? html : [html]) {
+    parseDocument(doc, provisions, endnoteLines);
+  }
   return { provisions, endnotes: endnoteLines.join('\n') };
 }
 
+// The register writes section numbers with a non-breaking hyphen; callers type
+// an ordinary one. Dots are significant (reg 1.05 is not section 105).
 export function normaliseSectionNo(no: string): string {
-  return no.replace(/[\s.]+/g, '').replace(/^s(?=\d)/i, '').toUpperCase();
+  return no
+    .replace(/[‐‑‒–—−]/g, '-')
+    .replace(/\s+/g, '')
+    .replace(/^(?:ss?|sect(?:ion)?|reg(?:ulation)?|r|cl(?:ause)?)\.?(?=\d|Schedule)/i, '')
+    .toUpperCase();
 }
 
 export function findProvision(act: ActText, sectionNo: string): Provision | null {
@@ -131,15 +181,16 @@ export function findProvision(act: ActText, sectionNo: string): Provision | null
 
 export function nearest(act: ActText, sectionNo: string, count = 3): Provision[] {
   const want = normaliseSectionNo(sectionNo);
-  const wantNum = parseInt(want, 10);
+  const wantNum = parseFloat(want);
   if (Number.isNaN(wantNum)) return act.provisions.slice(0, count);
   return [...act.provisions]
-    .sort((a, b) => {
-      const an = Math.abs(parseInt(normaliseSectionNo(a.no), 10) - wantNum);
-      const bn = Math.abs(parseInt(normaliseSectionNo(b.no), 10) - wantNum);
-      return (Number.isNaN(an) ? 1e9 : an) - (Number.isNaN(bn) ? 1e9 : bn);
+    .map((p) => {
+      const n = parseFloat(normaliseSectionNo(p.no));
+      return { p, distance: Number.isNaN(n) ? Infinity : Math.abs(n - wantNum) };
     })
-    .slice(0, count);
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, count)
+    .map((x) => x.p);
 }
 
 export interface DiffLine {
