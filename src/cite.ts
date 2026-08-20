@@ -10,6 +10,11 @@
 export interface Citation {
   act: string;
   sections: string[];
+  // Sections cited as living inside a Schedule of the act (e.g. "s 18 of Sch 2
+  // to the Competition and Consumer Act 2010"). Kept apart from `sections`
+  // because they are not the act's own numbered sections, so checking them
+  // against the principal act would report a real provision as missing.
+  scheduled?: string[];
 }
 
 const JURISDICTION = String.raw`\s+\((?:Cth|NSW|Vic|Qld|SA|WA|Tas|NT|ACT)\)`;
@@ -23,8 +28,9 @@ const ACT_NAME = new RegExp(
 );
 
 // Inside a provision number the dash is a hyphen (ITAA style, "50-5"); an
-// en dash or em dash between two numbers is a range instead.
-const NUM = String.raw`\d+[A-Z]{0,3}(?:[-‐‑.]\d+[A-Z]{0,3})?`;
+// en dash or em dash between two numbers is a range instead. The letter suffix
+// runs long in practice — Crimes Act "3ZQZB", ITAA 1936 "159GZZZZH".
+const NUM = String.raw`\d+[A-Z]{0,8}(?:[-‐‑.]\d+[A-Z]{0,8})?`;
 const LABEL = String.raw`sections?|ss?|§|regulations?|regs?|rules?|clauses?|cls?`;
 const SECTION_REF = new RegExp(
   String.raw`\b(?:${LABEL})\s*\.?\s*(${NUM})(?:\s*[–—]\s*(${NUM}))?`,
@@ -70,12 +76,22 @@ function sectionSpans(text: string): Span[] {
 // "s 3A and s 999 of the Act" binds both sections, so sibling references are
 // stripped out of the gap before it is judged.
 const SIBLING = new RegExp(String.raw`\b(?:${LABEL})\s*\.?\s*${NUM}(?:\s*[–—]\s*${NUM})?`, 'gi');
+const SIBLING_TEST = new RegExp(SIBLING.source, 'i');
 const AFTER_SECTION = /^[\s,]*(?:(?:and|or)[\s,]*)*(?:of|under|in|from)?\s*(?:the\s+)?$/i;
+// Act-first, plain adjacency: "... Act 1997 s 8-1".
 const AFTER_ACT = /^[\s,;:]*$/;
+// Act-first, a further section after one already bound to this act:
+// "... Act 1997 s 8-1; see also s 6-5". Only reached when a sibling reference
+// sits in the gap, so "Rules 2011 and clause 4 of the Fair Work Act" cannot
+// let the Rules swallow a section that belongs to the next act.
+const AFTER_ACT_MORE = /^[\s,;:]*(?:(?:and|or|see|also)[\s,;:]*)+$/i;
+// "s 18 of Sch 2 to the <Act>": the section is inside a schedule.
+const SCHEDULE_OF = /^[\s,]*of\s+sch(?:edule)?\.?\s*\w+\s+(?:to\s+)?(?:the\s+)?$/i;
 
 function bridges(gap: string, sectionFirst: boolean): boolean {
-  if (!sectionFirst) return AFTER_ACT.test(gap);
-  return AFTER_SECTION.test(gap.replace(SIBLING, ' '));
+  if (sectionFirst) return AFTER_SECTION.test(gap.replace(SIBLING, ' '));
+  if (AFTER_ACT.test(gap)) return true;
+  return SIBLING_TEST.test(gap) && AFTER_ACT_MORE.test(gap.replace(SIBLING, ' '));
 }
 
 export function parseCitations(text: string): Citation[] {
@@ -87,22 +103,37 @@ export function parseCitations(text: string): Citation[] {
     (sec) => !acts.some((act) => sec.start >= act.start && sec.start < act.end),
   );
   const byAct = new Map<string, Set<string>>();
+  const scheduledByAct = new Map<string, Set<string>>();
   for (const act of acts) {
     if (!byAct.has(act.value)) byAct.set(act.value, new Set());
   }
   for (const sec of sections) {
     let best: Span | null = null;
     let bestDistance = Infinity;
+    let bestScheduled = false;
     for (const act of acts) {
       const sectionFirst = sec.end <= act.start;
       const gap = sectionFirst ? text.slice(sec.end, act.start) : text.slice(act.end, sec.start);
-      if (!bridges(gap, sectionFirst)) continue;
+      let scheduled = false;
+      if (!bridges(gap, sectionFirst)) {
+        if (sectionFirst && SCHEDULE_OF.test(gap)) scheduled = true;
+        else continue;
+      }
       if (gap.length < bestDistance) {
         best = act;
         bestDistance = gap.length;
+        bestScheduled = scheduled;
       }
     }
-    if (best) byAct.get(best.value)?.add(sec.value);
+    if (!best) continue;
+    const bucket = bestScheduled ? scheduledByAct : byAct;
+    if (!bucket.has(best.value)) bucket.set(best.value, new Set());
+    bucket.get(best.value)?.add(sec.value);
   }
-  return [...byAct.entries()].map(([act, secs]) => ({ act, sections: [...secs] }));
+  return [...byAct.entries()].map(([act, secs]) => {
+    const scheduled = scheduledByAct.get(act);
+    return scheduled && scheduled.size > 0
+      ? { act, sections: [...secs], scheduled: [...scheduled] }
+      : { act, sections: [...secs] };
+  });
 }

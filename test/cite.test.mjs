@@ -76,6 +76,38 @@ test('the year inside an instrument title is not read as a provision number', ()
   assert.deepEqual(one('See the Renewable Energy (Electricity) Regulations 2001.').sections, []);
 });
 
+test('long letter suffixes on section numbers survive', () => {
+  // Crimes Act 3ZQZB and ITAA 1936 159GZZZZH are real provisions; a cap on the
+  // suffix length would drop them and verify_citations would call them missing.
+  assert.deepEqual(one('Crimes Act 1914 (Cth), ss 3ZQU–3ZQZB apply.').sections.sort(), ['3ZQU', '3ZQZB']);
+  assert.deepEqual(one('s 159GZZZZH of the Income Tax Assessment Act 1936').sections, ['159GZZZZH']);
+});
+
+test('"see also s X" after the act binds the further section', () => {
+  const c = one('Income Tax Assessment Act 1997 (Cth) s 8-1; see also s 6-5');
+  assert.deepEqual(c.sections.sort(), ['6-5', '8-1']);
+});
+
+test('a connective after an act does not steal the next act\'s section', () => {
+  // "rule 12 of the Rules and clause 4 of the Act": 4 belongs to the Act.
+  const byAct = Object.fromEntries(
+    parseCitations('rule 12 of the Federal Court Rules 2011 and clause 4 of the Fair Work Act 2009.').map((c) => [
+      c.act,
+      c.sections,
+    ]),
+  );
+  assert.deepEqual(byAct['Federal Court Rules 2011'], ['12']);
+  assert.deepEqual(byAct['Fair Work Act 2009'], ['4']);
+});
+
+test('a section inside a schedule is kept apart, not bound as a plain section', () => {
+  // s 18 of the ACL is s 18 of Schedule 2 to the CCA; binding it to the act
+  // would make the verifier report a real provision as missing.
+  const c = one('s 18 of Sch 2 to the Competition and Consumer Act 2010.');
+  assert.deepEqual(c.sections, []);
+  assert.deepEqual(c.scheduled, ['18']);
+});
+
 test('plain prose has no citations', () => {
   assert.deepEqual(parseCitations('Nothing legal to see here, move along.'), []);
 });
