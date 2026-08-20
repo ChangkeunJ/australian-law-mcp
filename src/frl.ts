@@ -103,7 +103,7 @@ async function request(path: string): Promise<Response> {
     try {
       const res = await fetch(BASE + path, {
         headers: { 'user-agent': UA },
-        signal: AbortSignal.timeout(45_000),
+        signal: AbortSignal.timeout(20_000),
       });
       if (res.status >= 500) {
         last = new FrlError(`FRL API responded ${res.status}`, res.status);
@@ -114,7 +114,8 @@ async function request(path: string): Promise<Response> {
       last = e;
     }
   }
-  throw last instanceof Error ? last : new FrlError(String(last));
+  const reason = last instanceof Error ? last.message : String(last);
+  throw new FrlError(`could not reach the Federal Register of Legislation API (${reason}) for ${path}`);
 }
 
 async function getJson<T>(path: string, ttl: number): Promise<T> {
@@ -133,7 +134,18 @@ async function getJson<T>(path: string, ttl: number): Promise<T> {
 }
 
 function quoted(value: string): string {
-  return value.replace(/'/g, "''").replace(/"/g, '');
+  const out = value.replace(/'/g, "''").replace(/"/g, '');
+  if (out.trim() === '') throw new FrlError('the search query is empty once quoting characters are removed');
+  return out;
+}
+
+// Title ids sit in the URL path, so a stray %, # or ? would truncate or
+// corrupt the request rather than produce a clean "no such title".
+function pathId(titleId: string): string {
+  if (!/^[A-Za-z0-9]+$/.test(titleId)) {
+    throw new FrlError(`"${titleId}" is not a register title id (letters and digits only, e.g. C2004A03348)`);
+  }
+  return titleId;
 }
 
 export type SearchType = 'name' | 'nameAndText' | 'id';
@@ -171,27 +183,35 @@ export async function amendingTitles(titleId: string, top = 15): Promise<SearchR
 
 export async function getTitle(titleId: string): Promise<Title | null> {
   try {
-    return await getJson<Title>(`/Titles('${quoted(titleId)}')`, HOUR);
+    return await getJson<Title>(`/Titles('${pathId(titleId)}')`, HOUR);
   } catch (e) {
     if (e instanceof FrlError && e.status === 404) return null;
     throw e;
   }
 }
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+// The register answers 404 for a calendar-impossible date, which findVersion
+// would otherwise report as "no version was in force then" — a statement
+// about a day that does not exist.
 export function assertDate(date: string): string {
-  if (!DATE.test(date)) throw new FrlError(`date must be yyyy-mm-dd, got "${date}"`);
+  const m = DATE.exec(date);
+  if (!m) throw new FrlError(`date must be yyyy-mm-dd, got "${date}"`);
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const parsed = new Date(Date.UTC(y, mo - 1, d));
+  if (parsed.getUTCFullYear() !== y || parsed.getUTCMonth() !== mo - 1 || parsed.getUTCDate() !== d) {
+    throw new FrlError(`"${date}" is not a real calendar date`);
+  }
+  if (y < 1901) throw new FrlError(`"${date}" predates federation; the register starts in 1901`);
   return date;
 }
 
 export async function findVersion(titleId: string, asAt?: string): Promise<Version | null> {
-  const selector = asAt
-    ? `asAt=${assertDate(asAt)}T00:00:00`
-    : `asAtSpecification='Latest'`;
+  const selector = asAt ? `asAt=${assertDate(asAt)}T00:00:00` : `asAtSpecification='Latest'`;
   try {
     return await getJson<Version>(
-      `/Versions/Find(titleId='${quoted(titleId)}',${selector})`,
+      `/Versions/Find(titleId='${pathId(titleId)}',${selector})`,
       asAt ? 24 * HOUR : HOUR,
     );
   } catch (e) {
@@ -200,20 +220,26 @@ export async function findVersion(titleId: string, asAt?: string): Promise<Versi
   }
 }
 
-export async function listVersions(titleId: string, top = 200): Promise<Version[]> {
-  const filter = encodeURIComponent(`titleId eq '${quoted(titleId)}'`);
-  const order = encodeURIComponent('start desc');
+// The API caps $top at 100.
+export async function listVersions(titleId: string, top = 100, order: 'asc' | 'desc' = 'desc'): Promise<Version[]> {
+  const filter = encodeURIComponent(`titleId eq '${pathId(titleId)}'`);
+  const orderBy = encodeURIComponent(`start ${order}`);
   const data = await getJson<ODataList<Version>>(
-    `/Versions?$filter=${filter}&$orderby=${order}&$top=${top}`,
+    `/Versions?$filter=${filter}&$orderby=${orderBy}&$top=${Math.min(top, 100)}`,
     HOUR,
   );
   return data.value;
 }
 
+export async function earliestVersion(titleId: string): Promise<Version | null> {
+  const rows = await listVersions(titleId, 1, 'asc');
+  return rows[0] ?? null;
+}
+
 export async function getEpub(titleId: string, asAt?: string): Promise<Uint8Array> {
   const selector = asAt ? `asat=${assertDate(asAt)}` : `asatspecification='Latest'`;
   const path =
-    `/documents/find(titleid='${quoted(titleId)}',${selector},type='Primary',` +
+    `/documents/find(titleid='${pathId(titleId)}',${selector},type='Primary',` +
     `format='Epub',uniqueTypeNumber=0,volumeNumber=0,rectificationVersionNumber=0)`;
   const res = await request(path);
   if (!res.ok) throw new FrlError(`FRL API responded ${res.status} for the ${titleId} document`, res.status);
