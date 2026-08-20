@@ -251,7 +251,7 @@ export function createServer(): McpServer {
         broad.count > unique.length
           ? `${broad.count} titles match "${query}"; ranked the ${unique.length} the register returned first`
           : `${unique.length} titles match "${query}"`;
-      return `${note}${scope} (showing ${rows.length}):\n${rows.join('\n')}`;
+      return `${note}${scope} (showing ${rows.length}):\n${rows.join('\n')}\n\n${attribution()}`;
     }),
   );
 
@@ -314,6 +314,16 @@ export function createServer(): McpServer {
         return earliest
           ? `No version of ${titleId} was in force on ${date}. The earliest version on the register starts ${earliest.start.slice(0, 10)}.`
           : `No versions of ${titleId} found on the register.`;
+      }
+      // Pre-electronic versions have a version record but no retrievable
+      // document (registerId null); say so rather than surfacing a raw 404.
+      if (!version.registerId) {
+        return (
+          `As at ${date}: ${version.name} [${titleId}] was in force (from ${version.start.slice(0, 10)}` +
+          (version.end ? ` to ${version.end.slice(0, 10)}` : '') +
+          `), but the register holds no electronic text for this version, so it cannot be shown here. ` +
+          `Read it on the register: ${webLink(titleId)}`
+        );
       }
       const act = await loadAct(version, date);
       let body: string;
@@ -411,10 +421,22 @@ export function createServer(): McpServer {
       if (!va || !vb) {
         return `No version in force on ${!va ? dateA : dateB} for ${titleId}.`;
       }
+      const idOf = (v: frl.Version) => v.registerId ?? 'no electronic version';
       const intro =
         `${va.name} [${titleId}]\n` +
-        `${dateA}: Compilation No. ${va.compilationNumber ?? '?'} (${va.registerId})\n` +
-        `${dateB}: Compilation No. ${vb.compilationNumber ?? '?'} (${vb.registerId})`;
+        `${dateA}: Compilation No. ${va.compilationNumber ?? '?'} (${idOf(va)})\n` +
+        `${dateB}: Compilation No. ${vb.compilationNumber ?? '?'} (${idOf(vb)})`;
+      // Pre-electronic versions come back with registerId null. Two of them are
+      // not "the same compilation" — the register simply holds no text to diff,
+      // and asserting no change across them is a false statement about the law.
+      if (!va.registerId || !vb.registerId) {
+        const which = !va.registerId && !vb.registerId ? 'either date' : `${!va.registerId ? dateA : dateB}`;
+        return (
+          `${intro}\n\nThe register holds no electronic text for ${which}, so these versions cannot be ` +
+          `compared here — no conclusion about whether the law changed can be drawn. Read them on the ` +
+          `register: ${webLink(titleId)}`
+        );
+      }
       if (va.registerId === vb.registerId) {
         return `${intro}\n\nSame compilation was in force on both dates — no textual change between them.`;
       }
@@ -540,6 +562,15 @@ export function createServer(): McpServer {
             );
           }
         }
+        for (const sec of citation.scheduled ?? []) {
+          // A provision inside a Schedule (e.g. s 18 of the Australian Consumer
+          // Law) is not one of the act's numbered sections; checking it against
+          // the principal act would wrongly report it as missing.
+          out.push(
+            `  [NOT CHECKED] s ${sec} is cited as being in a Schedule of this act. This tool checks the ` +
+              `act's own sections, not provisions within a schedule; read it on the register.`,
+          );
+        }
       }
       out.push('', attribution());
       return out.join('\n');
@@ -561,16 +592,40 @@ export function createServer(): McpServer {
       annotations: readOnly,
     },
     tool(async (args) => {
+      const phrase = args.phrase as string;
       const match = (args.match as frl.MatchType | undefined) ?? 'exact';
-      const result = await frl.searchTitles(args.phrase as string, 'nameAndText', match, (args.limit as number | undefined) ?? 10);
-      if (result.count === 0) return `Nothing on the register matches "${args.phrase}" (${match}).`;
+      const limit = (args.limit as number | undefined) ?? 10;
+      // The register's exact-phrase ranking hangs once $top reaches the match
+      // count — it scans the whole corpus to prove there are no more — which
+      // blew past the request timeout for any rare phrase at the default limit.
+      // A $top=1 probe returns the true count in about a second; we then ask
+      // for a page that stays below the count.
+      // ponytail: leaves the last one or two exact matches unshown when the
+      // count is at or below the limit; there is no fast way to fetch them.
+      const probe = await frl.searchTitles(phrase, 'nameAndText', match, 1);
+      if (probe.count === 0) return `Nothing on the register matches "${phrase}" (${match}).`;
+      const safeTop = match === 'exact' ? Math.min(limit, Math.max(1, probe.count - 2)) : Math.min(limit, probe.count);
+      let result = probe;
+      let note = '';
+      if (safeTop > 1) {
+        try {
+          result = await frl.searchTitles(phrase, 'nameAndText', match, safeTop);
+        } catch (e) {
+          if (!(e instanceof frl.FrlError)) throw e;
+          note = 'The register was too slow to rank the full page for this phrase; showing the first match. Narrow the phrase or set match="all".\n\n';
+        }
+      }
       const rows = result.titles.map((t) => {
         const ctx = t.searchContexts?.fullTextVersion;
         const rel = t.searchContexts?.text?.relevance ?? ctx?.relevance;
         const where = ctx ? ` — matched in ${ctx.registerId}${ctx.isLatest ? ' (latest version)' : ' (historical version)'}` : '';
         return `${t.id}  ${t.name}  [${statusLabel(t)}]${rel ? `  relevance ${rel.toFixed(1)}` : ''}${where}`;
       });
-      return `${result.count} matches (showing ${rows.length}):\n${rows.join('\n')}`;
+      const shown =
+        probe.count > rows.length
+          ? `showing ${rows.length} of ${probe.count}` + (match === 'exact' ? '; the register caps how many exact matches it will rank at once' : '')
+          : `showing ${rows.length}`;
+      return `${note}${probe.count} matches (${shown}):\n${rows.join('\n')}\n\n${attribution()}`;
     }),
   );
 
