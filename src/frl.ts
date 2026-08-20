@@ -12,6 +12,11 @@
 //   search criteria instead
 // - the text() search criteria needs the undocumented 3-argument form
 //   text("query",searchType,matchType); the 1-argument form matches names only
+// - $filter is rejected on titles/search and there is no criteria function for
+//   principal titles, so narrowing has to be done by the query itself
+// - enum-valued fields come back as their number from Versions/Find(asAt=...)
+//   and as their name from Versions/Find(asAtSpecification='Latest'), so both
+//   have to be accepted
 
 const BASE = 'https://api.prod.legislation.gov.au/v1';
 const UA = 'australian-law-mcp (github.com/ChangkeunJ/australian-law-mcp)';
@@ -103,7 +108,7 @@ async function request(path: string): Promise<Response> {
     try {
       const res = await fetch(BASE + path, {
         headers: { 'user-agent': UA },
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(30_000),
       });
       if (res.status >= 500) {
         last = new FrlError(`FRL API responded ${res.status}`, res.status);
@@ -112,6 +117,9 @@ async function request(path: string): Promise<Response> {
       return res;
     } catch (e) {
       last = e;
+      // A request that ran out of time will run out of time again; retrying it
+      // only doubles the wait before the caller hears about it.
+      if (e instanceof Error && e.name === 'TimeoutError') break;
     }
   }
   const reason = last instanceof Error ? last.message : String(last);
@@ -148,6 +156,34 @@ function pathId(titleId: string): string {
   return titleId;
 }
 
+// Member order is the enum's, from the service $metadata.
+const STATUS = ['InForce', 'Ceased', 'Repealed', 'NeverEffective'];
+const AFFECT = ['AsMade', 'Amend', 'Repeal', 'Cease', 'ChangeDate', 'Disallow'];
+
+function named(members: string[], value: unknown): string {
+  if (typeof value === 'number') return members[value] ?? String(value);
+  return typeof value === 'string' ? value : '';
+}
+
+function nameReasons(reasons: Reason[] | undefined): void {
+  for (const r of reasons ?? []) r.affect = named(AFFECT, r.affect);
+}
+
+function nameTitleEnums<T extends Title>(title: T): T {
+  title.status = named(STATUS, title.status);
+  for (const entry of title.statusHistory ?? []) {
+    entry.status = named(STATUS, entry.status);
+    nameReasons(entry.reasons);
+  }
+  return title;
+}
+
+function nameVersionEnums(version: Version): Version {
+  version.status = named(STATUS, version.status);
+  nameReasons(version.reasons);
+  return version;
+}
+
 export type SearchType = 'name' | 'nameAndText' | 'id';
 export type MatchType = 'exact' | 'all' | 'any' | 'contains' | 'excludes' | 'startswith';
 
@@ -166,26 +202,30 @@ export async function searchTitles(
   searchType: SearchType,
   match: MatchType,
   top = 10,
+  byName = false,
 ): Promise<SearchResult> {
   const criteria = encodeURIComponent(`text("${quoted(query)}",${searchType},${match})`);
   const expand = encodeURIComponent('searchContexts($expand=text,fullTextVersion)');
-  const path = `/titles/search(criteria='${criteria}')?$top=${top}&$count=true&$expand=${expand}`;
+  const order = byName ? `&$orderby=${encodeURIComponent('name asc')}` : '';
+  const path = `/titles/search(criteria='${criteria}')?$top=${Math.min(top, 100)}&$count=true&$expand=${expand}${order}`;
   const data = await getJson<ODataList<Title>>(path, HOUR);
-  return { count: data['@odata.count'] ?? data.value.length, titles: data.value };
+  return { count: data['@odata.count'] ?? data.value.length, titles: data.value.map(nameTitleEnums) };
 }
 
 export async function amendingTitles(titleId: string, top = 15): Promise<SearchResult> {
   const criteria = encodeURIComponent(`affectedby("${quoted(titleId)}",[amending])`);
-  const path = `/titles/search(criteria='${criteria}')?$top=${top}&$count=true`;
+  const path = `/titles/search(criteria='${criteria}')?$top=${Math.min(top, 100)}&$count=true`;
   const data = await getJson<ODataList<Title>>(path, HOUR);
-  return { count: data['@odata.count'] ?? data.value.length, titles: data.value };
+  return { count: data['@odata.count'] ?? data.value.length, titles: data.value.map(nameTitleEnums) };
 }
 
 export async function getTitle(titleId: string): Promise<Title | null> {
   try {
-    return await getJson<Title>(`/Titles('${pathId(titleId)}')`, HOUR);
+    return nameTitleEnums(await getJson<Title>(`/Titles('${pathId(titleId)}')`, HOUR));
   } catch (e) {
-    if (e instanceof FrlError && e.status === 404) return null;
+    // pathId has already rejected anything that is not id-shaped, so the 400
+    // the register answers for an unknown id means exactly "no such title".
+    if (e instanceof FrlError && (e.status === 404 || e.status === 400)) return null;
     throw e;
   }
 }
@@ -210,9 +250,8 @@ export function assertDate(date: string): string {
 export async function findVersion(titleId: string, asAt?: string): Promise<Version | null> {
   const selector = asAt ? `asAt=${assertDate(asAt)}T00:00:00` : `asAtSpecification='Latest'`;
   try {
-    return await getJson<Version>(
-      `/Versions/Find(titleId='${pathId(titleId)}',${selector})`,
-      asAt ? 24 * HOUR : HOUR,
+    return nameVersionEnums(
+      await getJson<Version>(`/Versions/Find(titleId='${pathId(titleId)}',${selector})`, asAt ? 24 * HOUR : HOUR),
     );
   } catch (e) {
     if (e instanceof FrlError && e.status === 404) return null;
@@ -228,7 +267,7 @@ export async function listVersions(titleId: string, top = 100, order: 'asc' | 'd
     `/Versions?$filter=${filter}&$orderby=${orderBy}&$top=${Math.min(top, 100)}`,
     HOUR,
   );
-  return data.value;
+  return data.value.map(nameVersionEnums);
 }
 
 export async function earliestVersion(titleId: string): Promise<Version | null> {
