@@ -73,6 +73,15 @@ network and API errors are always reported as UNVERIFIED rather than NOT FOUND,
 and a section is only checked against an act when the citation actually binds
 the two together.
 
+The same rule governs the text itself. The register has published in three
+different formats since 1901, and the oldest of them — as-made scans of acts
+from the federation era — carries no structural markup at all, only the
+numbering in the prose. Those are read from their own numbering, and the
+result is accepted only when the section numbers it recovers run in order from
+section 1. When they do not, the tool says the compilation could not be read
+rather than reporting an act with no sections or filing one section's words
+under another's number.
+
 ## Scope
 
 Commonwealth legislation only, by design. State registers either have no open
