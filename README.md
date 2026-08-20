@@ -31,9 +31,8 @@ Claude Desktop, Cursor, or any other stdio MCP client:
 }
 ```
 
-Requires Node 20 or newer. The `npx` recipes above resolve the package once it
-is on npm; until then, clone this repository, run `npm install && npm run build`,
-and point the client's `command` at `node` with `args` `["/path/to/dist/index.js"]`.
+Requires Node 20 or newer. Nothing else to install — `npx` fetches
+[the package](https://www.npmjs.com/package/australian-law-mcp) on first run.
 
 ## Tools
 
