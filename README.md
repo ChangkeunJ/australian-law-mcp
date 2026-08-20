@@ -55,6 +55,9 @@ docker run -i --rm australian-law-mcp
 | `search_full_text` | Relevance-ranked search over the body text of every title on the register. |
 | `check_frl_health` | Ping the register API so failures elsewhere can be attributed. |
 
+[docs/tools.md](docs/tools.md) has the parameters and a worked example of each,
+including what every tool does when it cannot answer.
+
 ## Why point-in-time matters
 
 Tax disputes, visa decisions, contracts and court matters turn on the law as
