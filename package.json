@@ -1,0 +1,47 @@
+{
+  "name": "australian-law-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for the Federal Register of Legislation: search Australian Commonwealth law, read it as it stood on any date, and check citations against the official register",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "australian-law-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "node scripts/check.mjs",
+    "smoke": "tsc && node scripts/smoke.mjs",
+    "test": "tsc && node --test test/",
+    "prepublishOnly": "npm test && node scripts/check.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "fflate": "^0.8.3",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChangkeunJ/australian-law-mcp.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "australia",
+    "law",
+    "legislation",
+    "legal",
+    "federal-register-of-legislation",
+    "point-in-time",
+    "citations"
+  ]
+}

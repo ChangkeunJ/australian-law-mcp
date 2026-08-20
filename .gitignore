@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.claude/
+CLAUDE.md
+AGENTS.md
+.mcp.json
+*.tgz
+*.epub
