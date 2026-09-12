@@ -6,12 +6,12 @@
     "url": "https://github.com/ChangkeunJ/australian-law-mcp",
     "source": "github"
   },
-  "version": "0.1.2",
+  "version": "0.1.5",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "australian-law-mcp",
-      "version": "0.1.2",
+      "version": "0.1.5",
       "transport": {
         "type": "stdio"
       }
