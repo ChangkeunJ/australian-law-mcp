@@ -268,7 +268,10 @@ Pass section="..." for a line-by-line diff.
 ```
 
 With a `section`, a line diff of that provision — including the case where it
-did not exist on one side:
+did not exist on one side. For very long changes, the diff retains the shared
+start and end, then shows the entire middle as removed and added. This bounds
+memory use and preserves line order, but can include unchanged lines inside
+the replacement block:
 
 ```
 compare_versions {"titleId": "C2004A03348", "dateA": "2016-01-01", "dateB": "2018-01-01", "section": "3A"}

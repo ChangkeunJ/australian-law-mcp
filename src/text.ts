@@ -362,30 +362,12 @@ function lcsDiff(al: string[], bl: string[]): DiffLine[] {
   return out;
 }
 
-// Past the budget, fall back to attributing each line to the version that
-// holds it. Not a minimal edit script, but no line is credited to the wrong
-// version, which is the property that matters for legal text. Reached only by
-// provisions like ITAA 1997 s 995-1, which is 3,000 lines of definitions.
+// Past the budget, replace the unmatched middle as a block. Matching lines by
+// occurrence counts loses their order and can hide a rearranged provision.
 function coarseDiff(al: string[], bl: string[]): DiffLine[] {
-  const spare = new Map<string, number>();
-  for (const line of bl) spare.set(line, (spare.get(line) ?? 0) + 1);
   const out: DiffLine[] = [];
-  const shared = new Map<string, number>();
-  for (const line of al) {
-    const left = spare.get(line) ?? 0;
-    if (left > 0) {
-      spare.set(line, left - 1);
-      shared.set(line, (shared.get(line) ?? 0) + 1);
-      out.push({ kind: ' ', text: line });
-    } else {
-      out.push({ kind: '-', text: line });
-    }
-  }
-  for (const line of bl) {
-    const claimed = shared.get(line) ?? 0;
-    if (claimed > 0) shared.set(line, claimed - 1);
-    else out.push({ kind: '+', text: line });
-  }
+  for (const text of al) out.push({ kind: '-', text });
+  for (const text of bl) out.push({ kind: '+', text });
   return out;
 }
 

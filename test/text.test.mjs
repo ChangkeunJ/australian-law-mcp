@@ -218,3 +218,22 @@ test('diffLines marks additions and removals', () => {
     [' one', '-two', '+two changed', ' three', '+four'],
   );
 });
+
+test('diffLines preserves both versions in order beyond the LCS budget', () => {
+  const lines = Array.from({ length: 4000 }, (_, i) => `line ${i}`);
+  const repeated = lines.map((_, i) => `line ${i % 3}`);
+  for (const [before, after] of [
+    [lines, [...lines].reverse()],
+    [repeated, [...repeated.slice(1), repeated[0]]],
+    [lines, ['first addition', ...lines, 'last addition']],
+    [['shared start', ...lines, 'shared end'], ['shared start', ...lines.slice(1), lines[0], 'shared end']],
+    [lines, lines],
+  ]) {
+    const a = before.join('\n');
+    const b = after.join('\n');
+    const diff = diffLines(a, b);
+    assert.equal(diff.some((line) => line.kind !== ' '), a !== b, 'changes must not be lost');
+    assert.ok(diff.filter((line) => line.kind !== '+').map((line) => line.text).join('\n') === a, 'old text order');
+    assert.ok(diff.filter((line) => line.kind !== '-').map((line) => line.text).join('\n') === b, 'new text order');
+  }
+});
