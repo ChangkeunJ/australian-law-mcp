@@ -9,6 +9,9 @@ updates:
     assignees:
       - ChangkeunJ
     groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
       minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -21,6 +24,9 @@ updates:
     assignees:
       - ChangkeunJ
     groups:
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
       minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]
