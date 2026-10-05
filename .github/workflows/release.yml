@@ -10,19 +10,37 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      # npm publishes whatever package.json says, while the registry entry
+      # below is written from the tag. A release where the two disagree would
+      # put one version on npm and announce another.
+      - name: refuse a tag that disagrees with package.json
+        run: |
+          tag=${GITHUB_REF#refs/tags/v}
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag does not match package.json version $pkg" >&2
+            exit 1
+          fi
       - run: npm ci
       - run: npm publish
 
+      # Pinned to one release and checked against the sha256 that release
+      # published, so a changed download cannot run here with the publishing
+      # credentials in scope. Bump both values together.
       - name: install mcp-publisher
-        run: >
-          curl -sL
-          https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz
-          | tar xz mcp-publisher
+        env:
+          VERSION: 1.8.1
+          SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+        run: |
+          curl -sSfL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
       # The registry rejects a server.json whose version does not match the
       # package it points at, so take both from the tag rather than trusting
       # the checked-in value to have been bumped.
