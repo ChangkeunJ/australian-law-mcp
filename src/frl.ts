@@ -90,17 +90,39 @@ export interface Version {
   reasons?: Reason[];
 }
 
-const cache = new Map<string, { at: number; value: unknown }>();
+const cache = new Map<string, { at: number; value: unknown; bytes: number }>();
 const HOUR = 3_600_000;
+// Counting entries alone would let 200 full search pages pin a few hundred
+// MB, so the cache is bounded by bytes as well as by entries.
+const CACHE_ENTRIES = 200;
+const CACHE_BYTES = 64 * 1024 * 1024;
+let cacheBytes = 0;
 
-function remember<T>(key: string, ttl: number, value: T): T {
-  if (cache.size > 200) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
+function remember<T>(key: string, value: T, bytes: number): T {
+  const old = cache.get(key);
+  if (old) {
+    cacheBytes -= old.bytes;
+    cache.delete(key);
   }
-  cache.set(key, { at: Date.now(), value });
+  cache.set(key, { at: Date.now(), value, bytes });
+  cacheBytes += bytes;
+  while (cache.size > 1 && (cache.size > CACHE_ENTRIES || cacheBytes > CACHE_BYTES)) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cacheBytes -= cache.get(oldest)?.bytes ?? 0;
+    cache.delete(oldest);
+  }
   return value;
 }
+
+// The largest JSON page the register legitimately sends (100 titles with
+// their search contexts) is under 1 MB and the largest epub is tens of MB, so
+// a body past these caps is not the register answering a question; it is
+// refused part-way rather than buffered whole.
+const MAX_JSON_BYTES = 10 * 1024 * 1024;
+const MAX_EPUB_BYTES = 300 * 1024 * 1024;
+const MAX_ERROR_BYTES = 64 * 1024;
+const decoder = new TextDecoder();
 
 async function request(path: string): Promise<Response> {
   let last: unknown;
@@ -126,6 +148,34 @@ async function request(path: string): Promise<Response> {
   throw new FrlError(`could not reach the Federal Register of Legislation API (${reason}) for ${path}`);
 }
 
+export async function readBody(res: Response, cap: number, what: string): Promise<Uint8Array> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > cap) {
+    throw new FrlError(`the ${what} response declares ${declared} bytes, above the ${cap} byte limit`);
+  }
+  if (!res.body) return new Uint8Array(0);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => {});
+      throw new FrlError(`the ${what} response exceeded ${cap} bytes`);
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 async function getJson<T>(path: string, ttl: number): Promise<T> {
   const hit = cache.get(path);
   if (hit && Date.now() - hit.at < ttl) return hit.value as T;
@@ -133,12 +183,15 @@ async function getJson<T>(path: string, ttl: number): Promise<T> {
   if (!res.ok) {
     let detail = '';
     try {
-      const body = (await res.json()) as { error?: { message?: string } };
+      const body = JSON.parse(decoder.decode(await readBody(res, MAX_ERROR_BYTES, 'error'))) as {
+        error?: { message?: string };
+      };
       detail = body.error?.message ? `: ${body.error.message}` : '';
     } catch {}
     throw new FrlError(`FRL API responded ${res.status} for ${path}${detail}`, res.status);
   }
-  return remember(path, ttl, (await res.json()) as T);
+  const raw = await readBody(res, MAX_JSON_BYTES, 'register');
+  return remember(path, JSON.parse(decoder.decode(raw)) as T, raw.byteLength);
 }
 
 function quoted(value: string): string {
@@ -282,13 +335,13 @@ export async function getEpub(titleId: string, asAt?: string): Promise<Uint8Arra
     `format='Epub',uniqueTypeNumber=0,volumeNumber=0,rectificationVersionNumber=0)`;
   const res = await request(path);
   if (!res.ok) throw new FrlError(`FRL API responded ${res.status} for the ${titleId} document`, res.status);
-  return new Uint8Array(await res.arrayBuffer());
+  return readBody(res, MAX_EPUB_BYTES, `${titleId} document`);
 }
 
 export async function ping(): Promise<{ ms: number; release: string | null }> {
   const started = Date.now();
   const res = await request('/titles?$top=1');
   if (!res.ok) throw new FrlError(`FRL API responded ${res.status}`, res.status);
-  await res.arrayBuffer();
+  await readBody(res, MAX_JSON_BYTES, 'register');
   return { ms: Date.now() - started, release: res.headers.get('x-frl-version') };
 }

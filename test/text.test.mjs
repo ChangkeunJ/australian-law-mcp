@@ -237,3 +237,45 @@ test('diffLines preserves both versions in order beyond the LCS budget', () => {
     assert.ok(diff.filter((line) => line.kind !== '-').map((line) => line.text).join('\n') === b, 'new text order');
   }
 });
+
+// An epub carries images and fonts beside the text, and a hostile archive can
+// declare gigabytes. Only the document html is ever inflated, and only within
+// the declared-size caps.
+import { strToU8, zipSync } from 'fflate';
+import { epubDocuments, epubEntryFilter } from '../dist/text.js';
+
+test('an image entry is never inflated and does not count toward the text budget', () => {
+  const doc = '<p class="ActHead5"><span class="CharSectno">1</span><span>Short title</span></p>';
+  const zip = zipSync({
+    mimetype: strToU8('application/epub+zip'),
+    'OEBPS/document_1/document_1.html': strToU8(doc),
+    'OEBPS/images/big.png': new Uint8Array(1024 * 1024),
+  });
+  const docs = epubDocuments(zip, { documentBytes: 4096, totalBytes: 4096 });
+  assert.equal(docs.length, 1);
+  assert.match(docs[0], /Short title/);
+});
+
+test('a document above the per-entry cap is refused with its declared size', () => {
+  const zip = zipSync({ 'OEBPS/document_1/document_1.html': new Uint8Array(8192) });
+  assert.throws(
+    () => epubDocuments(zip, { documentBytes: 4096, totalBytes: 1e9 }),
+    /declares 8192 bytes, above the 4096 byte limit/,
+  );
+});
+
+test('documents whose declared sizes add up past the total cap are refused', () => {
+  const zip = zipSync({
+    'OEBPS/document_1/document_1.html': new Uint8Array(3000),
+    'OEBPS/document_2/document_2.html': new Uint8Array(3000),
+  });
+  assert.throws(() => epubDocuments(zip, { documentBytes: 4096, totalBytes: 4096 }), /more than 4096 bytes in total/);
+});
+
+test('the entry filter admits only the document html', () => {
+  const filter = epubEntryFilter();
+  const info = (name) => ({ name, size: 1, originalSize: 1, compression: 8 });
+  assert.equal(filter(info('mimetype')), false);
+  assert.equal(filter(info('OEBPS/images/x.png')), false);
+  assert.equal(filter(info('OEBPS/document_2/document_2.html')), true);
+});

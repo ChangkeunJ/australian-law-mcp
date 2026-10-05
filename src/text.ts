@@ -21,7 +21,7 @@
 //   does not order logically, each with its own endnotes, so the endnote
 //   latch has to reset per document
 
-import { unzipSync } from 'fflate';
+import { type UnzipFileInfo, unzipSync } from 'fflate';
 
 export interface Provision {
   no: string;
@@ -89,10 +89,45 @@ export function htmlBlocks(html: string): Block[] {
   return blocks;
 }
 
-export function epubDocuments(epub: Uint8Array): string[] {
-  const files = unzipSync(epub);
+export interface EpubLimits {
+  documentBytes: number;
+  totalBytes: number;
+}
+
+// ITAA 1997 parses to about 90 MB of text, so the per-document cap has to be
+// generous: the point is to refuse an archive that declares gigabytes, not to
+// trim a real act.
+export const DEFAULT_LIMITS: EpubLimits = {
+  documentBytes: 256 * 1024 * 1024,
+  totalBytes: 512 * 1024 * 1024,
+};
+
+const DOCUMENT = /^OEBPS\/document_\d+\/document_\d+\.html$/;
+
+// fflate consults the filter before it allocates or inflates an entry, so the
+// images and fonts in an epub never cost memory at all, and a document whose
+// declared size is past the cap is refused before any is committed to it.
+export function epubEntryFilter(limits: EpubLimits = DEFAULT_LIMITS): (file: UnzipFileInfo) => boolean {
+  let total = 0;
+  return (file) => {
+    if (!DOCUMENT.test(file.name)) return false;
+    if (file.originalSize > limits.documentBytes) {
+      throw new Error(
+        `epub entry ${file.name} declares ${file.originalSize} bytes, above the ${limits.documentBytes} byte limit`,
+      );
+    }
+    total += file.originalSize;
+    if (total > limits.totalBytes) {
+      throw new Error(`the documents in this epub declare more than ${limits.totalBytes} bytes in total`);
+    }
+    return true;
+  };
+}
+
+export function epubDocuments(epub: Uint8Array, limits: EpubLimits = DEFAULT_LIMITS): string[] {
+  const files = unzipSync(epub, { filter: epubEntryFilter(limits) });
   const names = Object.keys(files)
-    .filter((n) => /^OEBPS\/document_\d+\/document_\d+\.html$/.test(n))
+    .filter((n) => DOCUMENT.test(n))
     .sort((a, b) => Number(/_(\d+)\//.exec(a)?.[1]) - Number(/_(\d+)\//.exec(b)?.[1]));
   if (names.length === 0) throw new Error('no document html found inside the epub');
   const decoder = new TextDecoder();
