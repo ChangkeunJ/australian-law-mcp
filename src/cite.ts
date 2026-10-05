@@ -22,8 +22,13 @@ const WORD = String.raw`[A-Z][\w'’()–-]*,?`;
 // "(No. 2)" between the keyword and the year is a naming convention the
 // register uses heavily (Appropriation Act (No. 3) 2003-2004).
 const SERIAL = String.raw`(?:\s+\(No\.?\s*\d+\))?`;
+// A name may extend by at most 20 tokens past its first word. Real titles run
+// to about a dozen ("Australian Securities and Investments Commission
+// Supervisory Cost Recovery Levy (Collection) Act 2017" is ten). Unbounded,
+// the lazy extension rescanned the rest of the text from every capitalised
+// word: 1.5 s on 50k characters, growing quadratically from there.
 const ACT_NAME = new RegExp(
-  String.raw`\b((?:A |An |The )?(?:${WORD}(?:\s+(?:[a-z]{1,3}|${WORD}|\([^)]{1,60}\)))*?)\s+(?:Act|Regulations?|Rules|Code|Determination)${SERIAL}\s+\d{4})(?:${JURISDICTION})?`,
+  String.raw`\b((?:A |An |The )?(?:${WORD}(?:\s+(?:[a-z]{1,3}|${WORD}|\([^)]{1,60}\))){0,20}?)\s+(?:Act|Regulations?|Rules|Code|Determination)${SERIAL}\s+\d{4})(?:${JURISDICTION})?`,
   'g',
 );
 

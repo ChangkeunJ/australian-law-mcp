@@ -17,8 +17,12 @@ and `F2019L00196` for a legislative instrument.
 | `get_law_as_at` | `titleId`, `date` (yyyy-mm-dd), optional `section`, `full`, `page` |
 | `get_amendment_status` | `titleId` |
 | `compare_versions` | `titleId`, `dateA`, `dateB`, optional `section`, `page` |
-| `verify_citations` | `text` |
+| `verify_citations` | `text` (up to 50,000 characters; the first 25 citations are checked) |
 | `check_frl_health` | nothing |
+
+Inputs are bounded: `query` and `phrase` take up to 500 characters, `section`
+up to 100, and a `titleId` is letters and digits only. Anything else is refused
+before the register is asked.
 
 ## search_law
 

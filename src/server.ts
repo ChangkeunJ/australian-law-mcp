@@ -183,6 +183,13 @@ function tool(fn: (args: Args) => Promise<string>) {
 
 const readOnly = { readOnlyHint: true, openWorldHint: true };
 
+// A register id is letters and digits (C2004A03348, F2019L00196). Refusing
+// anything else in the schema keeps a malformed id from reaching the network;
+// frl.pathId repeats the check for callers that bypass the schema.
+const TITLE_ID = z.string().regex(/^[A-Za-z0-9]{1,20}$/, 'a register title id is letters and digits only, e.g. C2004A03348');
+// yyyy-mm-dd; frl.assertDate does the calendar check.
+const DATE = z.string().max(10);
+
 export function createServer(): McpServer {
   const server = new McpServer(
     { name: 'australian-law-mcp', version: VERSION },
@@ -202,7 +209,7 @@ export function createServer(): McpServer {
         'Finds Commonwealth acts and legislative instruments on the Federal Register of Legislation by title. ' +
         'Returns title ids for the other tools. Falls back to full-text matching when nothing matches by name.',
       inputSchema: z.object({
-        query: z.string().min(2).describe('Words from the title, e.g. "income tax rates"'),
+        query: z.string().min(2).max(500).describe('Words from the title, e.g. "income tax rates"'),
         limit: z.number().int().min(1).max(50).optional(),
       }),
       annotations: readOnly,
@@ -268,8 +275,8 @@ export function createServer(): McpServer {
         'Returns the latest compilation of a Commonwealth act or instrument. Without a section number it lists ' +
         'the table of sections; with one it returns that provision. Set full=true for the whole text, paginated.',
       inputSchema: z.object({
-        titleId: z.string().describe('Register title id, e.g. C2004A03348'),
-        section: z.string().optional().describe('Section number, e.g. "3A" or "90-5"'),
+        titleId: TITLE_ID.describe('Register title id, e.g. C2004A03348'),
+        section: z.string().max(100).optional().describe('Section number, e.g. "3A" or "90-5"'),
         full: z.boolean().optional().describe('Return the full text instead of the table of sections'),
         page: z.number().int().min(1).optional(),
       }),
@@ -302,9 +309,9 @@ export function createServer(): McpServer {
         'Returns the compilation of a Commonwealth act that was in force on the given date — the register keeps ' +
         'every historical version. Same output shape as get_law_text.',
       inputSchema: z.object({
-        titleId: z.string(),
-        date: z.string().describe('yyyy-mm-dd'),
-        section: z.string().optional(),
+        titleId: TITLE_ID,
+        date: DATE.describe('yyyy-mm-dd'),
+        section: z.string().max(100).optional(),
         full: z.boolean().optional(),
         page: z.number().int().min(1).optional(),
       }),
@@ -352,7 +359,7 @@ export function createServer(): McpServer {
       description:
         'Reports whether a title is in force, what its latest compilation incorporates, whether commenced ' +
         'amendments are still unincorporated, and which acts have amended it.',
-      inputSchema: z.object({ titleId: z.string() }),
+      inputSchema: z.object({ titleId: TITLE_ID }),
       annotations: readOnly,
     },
     tool(async (args) => {
@@ -405,10 +412,10 @@ export function createServer(): McpServer {
         'Shows what changed in an act between two dates: which sections were added, removed or reworded. ' +
         'Give a section number for a line-by-line diff of that provision.',
       inputSchema: z.object({
-        titleId: z.string(),
-        dateA: z.string().describe('yyyy-mm-dd, the earlier date'),
-        dateB: z.string().describe('yyyy-mm-dd, the later date'),
-        section: z.string().optional(),
+        titleId: TITLE_ID,
+        dateA: DATE.describe('yyyy-mm-dd, the earlier date'),
+        dateB: DATE.describe('yyyy-mm-dd, the later date'),
+        section: z.string().max(100).optional(),
         page: z.number().int().min(1).optional(),
       }),
       annotations: readOnly,
@@ -499,7 +506,7 @@ export function createServer(): McpServer {
         'compilation. Use before presenting legal citations to a user. An upstream failure is reported as ' +
         'UNVERIFIED, never as a missing law.',
       inputSchema: z.object({
-        text: z.string().min(3).describe('Text containing the citations to check'),
+        text: z.string().min(3).max(50_000).describe('Text containing the citations to check'),
       }),
       annotations: readOnly,
     },
@@ -590,7 +597,7 @@ export function createServer(): McpServer {
         'Searches the body text of every act and instrument on the register for a phrase, ranked by relevance. ' +
         'Slower and broader than search_law.',
       inputSchema: z.object({
-        phrase: z.string().min(3),
+        phrase: z.string().min(3).max(500),
         match: z.enum(['exact', 'all', 'any']).optional().describe('exact = the phrase verbatim (default), all = every word, any = any word'),
         limit: z.number().int().min(1).max(50).optional(),
       }),

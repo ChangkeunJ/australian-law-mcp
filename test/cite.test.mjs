@@ -111,3 +111,24 @@ test('a section inside a schedule is kept apart, not bound as a plain section', 
 test('plain prose has no citations', () => {
   assert.deepEqual(parseCitations('Nothing legal to see here, move along.'), []);
 });
+
+test('a long run of capitalised words is scanned in linear time', () => {
+  // The unbounded act-name pattern rescanned the rest of the text from every
+  // capitalised word: 50k characters took 1.5 s and 200k took 23 s, which is
+  // long enough for one verify_citations call to hold the whole server.
+  const text = 'Foo Bar Baz '.repeat(20_000);
+  const started = performance.now();
+  assert.deepEqual(parseCitations(text), []);
+  assert.ok(performance.now() - started < 2000, 'bounded extension must stay linear');
+});
+
+test('long real act names still parse under the token bound', () => {
+  assert.equal(
+    one('See the Australian Securities and Investments Commission Supervisory Cost Recovery Levy (Collection) Act 2017.').act,
+    'Australian Securities and Investments Commission Supervisory Cost Recovery Levy (Collection) Act 2017',
+  );
+  assert.equal(
+    one('Treasury Laws Amendment (Enterprise Tax Plan Base Rate Entities) Act 2018 applies.').act,
+    'Treasury Laws Amendment (Enterprise Tax Plan Base Rate Entities) Act 2018',
+  );
+});
