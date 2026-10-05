@@ -19,6 +19,9 @@ const VERSION: string = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ).version;
 const PAGE_SIZE = 5000;
+// Each citation costs up to four register requests, so a text carrying
+// hundreds of them would hold this process, and the register, for minutes.
+const MAX_CITATIONS = 25;
 
 // The register's terms require this exact attribution wording for changed
 // content, a link to the source page and a licence link.
@@ -504,7 +507,8 @@ export function createServer(): McpServer {
         'Extracts Australian statute citations from text and checks each against the Federal Register of ' +
         'Legislation: does the act exist, is it still in force, does the cited section exist in the current ' +
         'compilation. Use before presenting legal citations to a user. An upstream failure is reported as ' +
-        'UNVERIFIED, never as a missing law.',
+        'UNVERIFIED, never as a missing law. At most 25 citations are checked per call; the rest are ' +
+        'listed as NOT CHECKED so they can be sent again.',
       inputSchema: z.object({
         text: z.string().min(3).max(50_000).describe('Text containing the citations to check'),
       }),
@@ -516,7 +520,7 @@ export function createServer(): McpServer {
         return 'No Australian statute citations recognised in the text (looked for act names ending in Act/Regulations/Rules + year).';
       }
       const out: string[] = [];
-      for (const citation of citations) {
+      for (const citation of citations.slice(0, MAX_CITATIONS)) {
         let title: frl.Title | null = null;
         let fuzzy = false;
         try {
@@ -583,6 +587,16 @@ export function createServer(): McpServer {
               `act's own sections, not provisions within a schedule; read it on the register.`,
           );
         }
+      }
+      // The ones past the cap are named rather than dropped: a citation that
+      // silently went unchecked would read as one that passed.
+      const skipped = citations.slice(MAX_CITATIONS);
+      if (skipped.length > 0) {
+        out.push(
+          `[NOT CHECKED] ${skipped.length} more citation${skipped.length === 1 ? '' : 's'} not checked: this tool ` +
+            `checks at most ${MAX_CITATIONS} per call. Call again with the remaining text. ` +
+            `Not checked: ${skipped.map((c) => c.act).join('; ')}`,
+        );
       }
       out.push('', attribution());
       return out.join('\n');

@@ -337,7 +337,8 @@ The labels are not interchangeable:
   be read. This is unknown, not confirmation, and never means the law is
   missing.
 - `NOT CHECKED` — the citation points into a Schedule, which this tool does not
-  index.
+  index, or it came after the 25th citation in one call. The names not checked
+  are listed so they can be sent again.
 
 ```
 verify_citations {"text": "See the Widget Standards Act 1999."}
