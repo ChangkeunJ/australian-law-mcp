@@ -5,14 +5,21 @@ updates:
     schedule:
       interval: weekly
       day: monday
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 2
     assignees:
       - ChangkeunJ
     groups:
       security:
         applies-to: security-updates
         patterns: ["*"]
-      minor-and-patch:
+      # Split by dependency type so the auto-merge workflow can tell a bump
+      # of the compiler from a change to what ships.
+      dev-minor-and-patch:
+        dependency-type: development
+        patterns: ["*"]
+        update-types: [minor, patch]
+      prod-minor-and-patch:
+        dependency-type: production
         patterns: ["*"]
         update-types: [minor, patch]
   - package-ecosystem: github-actions
@@ -30,3 +37,11 @@ updates:
       minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 1
+    assignees:
+      - ChangkeunJ
