@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import * as frl from './frl.js';
 import { parseCitations } from './cite.js';
+import { renderChanges, selectChanges } from './changes.js';
 import {
   type ActText,
   type Provision,
@@ -216,7 +217,8 @@ export function createServer(): McpServer {
       instructions:
         'Australian Commonwealth legislation from the Federal Register of Legislation. ' +
         'Use search_law to find a title id, get_law_text to read sections, get_law_as_at for the text ' +
-        'in force on a past date, and verify_citations to check statute citations before presenting them.',
+        'in force on a past date, get_changes_since for what has changed in a title since a date, and ' +
+        'verify_citations to check statute citations before presenting them.',
     },
   );
 
@@ -522,6 +524,49 @@ export function createServer(): McpServer {
           : [...added, ...removed, ...changed].join('\n');
       const page = paginate(summary, args.page as number | undefined);
       return `${intro}\n\n${page}\n\nPass section="..." for a line-by-line diff.\n\n${attribution()}`;
+    }),
+  );
+
+  server.registerTool(
+    'get_changes_since',
+    {
+      title: 'What has changed in an act since a date',
+      description:
+        'Lists every compilation of a Commonwealth act or instrument that commenced after a date, what each one ' +
+        'incorporated and which titles amended it, plus any change of status such as a repeal. Use it to learn ' +
+        'whether the law has moved since you last read it; compare_versions shows the text that changed.',
+      inputSchema: z.object({
+        titleId: TITLE_ID,
+        since: DATE.describe('yyyy-mm-dd, the day you last knew the law'),
+        until: DATE.optional().describe('yyyy-mm-dd; the window runs to today without it'),
+        refresh: REFRESH,
+      }),
+      annotations: readOnly,
+    },
+    tool(async (args) => {
+      const titleId = args.titleId as string;
+      const fresh = args.refresh === true;
+      const since = frl.assertDate(args.since as string);
+      const until = args.until ? frl.assertDate(args.until as string) : undefined;
+      if (until && since > until) {
+        throw new Error(`since (${since}) must be on or before until (${until})`);
+      }
+      const title = await frl.getTitle(titleId, fresh);
+      if (!title) return `No title ${titleId} on the register.`;
+      // The register caps $top at 100 and sends the newest first; selectChanges
+      // says so when the page did not reach back to the date.
+      const versions = await frl.listVersions(titleId, 100, 'desc', fresh);
+      const changes = selectChanges(versions, title.statusHistory, since, until);
+      const lines = [`${title.name} [${title.id}] — ${statusLabel(title)}`, '', renderChanges(changes, since, until)];
+      if (title.hasCommencedUnincorporatedAmendments) {
+        lines.push(
+          '',
+          'Warning: the register records commenced amendments that no compilation yet incorporates, so this list ' +
+            'may lag the law.',
+        );
+      }
+      lines.push('', `Source: ${webLink(titleId)}`, attribution());
+      return lines.join('\n');
     }),
   );
 

@@ -17,6 +17,7 @@ and `F2019L00196` for a legislative instrument.
 | `get_law_as_at` | `titleId`, `date` (yyyy-mm-dd), optional `section`, `full`, `page`, `refresh` |
 | `get_amendment_status` | `titleId`, optional `refresh` |
 | `compare_versions` | `titleId`, `dateA`, `dateB`, optional `section`, `page`, `refresh` |
+| `get_changes_since` | `titleId`, `since` (yyyy-mm-dd), optional `until`, `refresh` |
 | `verify_citations` | `text` (up to 50,000 characters; the first 25 citations are checked) |
 | `check_frl_health` | nothing |
 
@@ -315,6 +316,26 @@ Same compilation was in force on both dates — no textual change between them.
 
 If either side has no electronic text, no comparison is offered and no
 conclusion about whether the law changed is drawn.
+
+## get_changes_since
+
+What a title has been through since a date: every compilation that commenced
+after it, what each one incorporated and which titles did the amending, and
+any change of status such as a repeal. Use it to learn whether the law has
+moved since you last read it; `compare_versions` shows the text that changed.
+
+The reply opens with the compilation that was in force on `since`, then lists
+each later compilation with its register id, its in-force window and the
+amending titles the register records for it, then any status change in the
+window, then the amending titles collected together. Pass `until` to close the
+window; compilations after it are counted rather than listed.
+
+When nothing commenced in the window the reply says so and names the
+compilation that is still in force, which is a stronger statement than an
+empty list. The register returns at most 100 versions of a title; when all of
+them postdate `since`, the reply says that what was in force on that day and
+any older change are not shown, rather than implying the list is complete. A
+version the register holds no electronic text for is listed as such.
 
 ## verify_citations
 

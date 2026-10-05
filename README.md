@@ -52,6 +52,7 @@ docker run -i --rm australian-law-mcp
 | `verify_citations` | Pull statute citations out of text and check each against the register: does the act exist, is it in force, does the cited section exist. Upstream failures come back as UNVERIFIED, never as a missing law. |
 | `get_amendment_status` | In force or repealed, what the latest compilation incorporates, whether commenced amendments are still unincorporated, and what has amended it. |
 | `compare_versions` | What changed between two dates: sections added, removed, reworded — or a line diff of one section. |
+| `get_changes_since` | What a title has been through since a date: the compilations that commenced, what each incorporated, which titles amended it, and any repeal. |
 | `search_full_text` | Relevance-ranked search over the body text of every title on the register. |
 | `check_frl_health` | Ping the register API so failures elsewhere can be attributed. |
 

@@ -42,7 +42,7 @@ console.log('ok  initialize:', init.result.serverInfo.name, init.result.protocol
 
 const tools = await rpc('tools/list', {});
 const names = tools.result.tools.map((t) => t.name).sort();
-assert.equal(names.length, 8);
+assert.equal(names.length, 9);
 console.log('ok  tools/list:', names.join(', '));
 
 const call = await rpc('tools/call', {
@@ -116,6 +116,26 @@ const compare = await rpc('tools/call', {
 const added = (compare.result.content[0].text.match(/^\+ /gm) ?? []).length;
 assert.ok(added < 10, `expected a small amendment, got ${added} provisions reported as added`);
 console.log(`ok  compare_versions: reports ${added} additions, not the whole act`);
+
+const changes = await rpc('tools/call', {
+  name: 'get_changes_since',
+  arguments: { titleId: 'C2004A03348', since: '2016-01-01', until: '2018-01-01' },
+});
+assert.match(changes.result.content[0].text, /In force on 2016-01-01: Compilation No\. \S+ \(register id C2015C00323\)/);
+assert.match(changes.result.content[0].text, /Compilation No\. 48 \(register id C2016C01138\)/);
+console.log('ok  get_changes_since: Compilation No. 48 (C2016C01138) is listed between 2016 and 2018');
+
+const refreshed = await rpc('tools/call', {
+  name: 'get_law_text',
+  arguments: { titleId: 'C2004A03348', section: 'Schedule 7', refresh: true },
+});
+assert.match(refreshed.result.content[0].text, /exceeds \$45,000/);
+console.log('ok  get_law_text: refresh reads the register again and returns the same schedule');
+
+const crowd = Array.from({ length: 26 }, (_, i) => `the Zzqq${String.fromCharCode(65 + i)} Widget Act 2000`).join(', ');
+const capped = await rpc('tools/call', { name: 'verify_citations', arguments: { text: `See ${crowd}.` } });
+assert.match(capped.result.content[0].text, /\[NOT CHECKED\] 1 more citation not checked/);
+console.log('ok  verify_citations: the 26th citation is named as not checked rather than dropped');
 
 const reversed = await rpc('tools/call', {
   name: 'compare_versions',

@@ -88,6 +88,12 @@ assert.ok(historic);
 assert.notEqual(historic.registerId, latest.registerId);
 ok(`as at 2017-01-05: Compilation No. ${historic.compilationNumber} (${historic.registerId})`);
 
+// get_changes_since relies on the register sending at most 100 versions to
+// know when a page did not reach back to the date asked about.
+const hundred = await frl.listVersions('C1936A00027');
+assert.equal(hundred.length, 100, 'the register caps $top at 100');
+ok('listVersions returns the register maximum of 100 rows');
+
 const amending = await frl.amendingTitles(itra.id, 5);
 assert.ok(amending.count > 50);
 ok(`amended by ${amending.count} titles`);
