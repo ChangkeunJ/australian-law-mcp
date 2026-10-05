@@ -18,7 +18,8 @@
 //   and as their name from Versions/Find(asAtSpecification='Latest'), so both
 //   have to be accepted
 
-const BASE = 'https://api.prod.legislation.gov.au/v1';
+const REGISTER_HOST = 'api.prod.legislation.gov.au';
+const BASE = `https://${REGISTER_HOST}/v1`;
 const UA = 'australian-law-mcp (github.com/ChangkeunJ/australian-law-mcp)';
 
 export class FrlError extends Error {
@@ -132,12 +133,21 @@ async function request(path: string): Promise<Response> {
         headers: { 'user-agent': UA },
         signal: AbortSignal.timeout(30_000),
       });
+      // fetch follows redirects on its own. The register is the only host this
+      // server reads from, so a body that arrived from anywhere else is
+      // refused rather than parsed as if the register had sent it.
+      const host = res.url ? new URL(res.url).hostname : REGISTER_HOST;
+      if (host !== REGISTER_HOST) {
+        await res.body?.cancel().catch(() => {});
+        throw new FrlError(`the register redirected to ${host}, which this server does not read from`);
+      }
       if (res.status >= 500) {
         last = new FrlError(`FRL API responded ${res.status}`, res.status);
         continue;
       }
       return res;
     } catch (e) {
+      if (e instanceof FrlError) throw e;
       last = e;
       // A request that ran out of time will run out of time again; retrying it
       // only doubles the wait before the caller hears about it.
@@ -266,7 +276,7 @@ export async function searchTitles(
 }
 
 export async function amendingTitles(titleId: string, top = 15): Promise<SearchResult> {
-  const criteria = encodeURIComponent(`affectedby("${quoted(titleId)}",[amending])`);
+  const criteria = encodeURIComponent(`affectedby("${pathId(titleId)}",[amending])`);
   const path = `/titles/search(criteria='${criteria}')?$top=${Math.min(top, 100)}&$count=true`;
   const data = await getJson<ODataList<Title>>(path, HOUR);
   return { count: data['@odata.count'] ?? data.value.length, titles: data.value.map(nameTitleEnums) };
