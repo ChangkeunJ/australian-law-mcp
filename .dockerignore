@@ -1,0 +1,11 @@
+.git
+node_modules
+dist
+test
+scripts
+docs
+assets
+.github
+*.md
+*.tgz
+*.epub
