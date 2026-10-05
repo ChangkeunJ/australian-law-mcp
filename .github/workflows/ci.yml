@@ -2,16 +2,23 @@ name: ci
 on:
   push:
   pull_request:
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
       - run: npm ci
+      # Three production dependencies, so a true positive is actionable the
+      # same day and a false alarm is cheap to assess. The signatures check
+      # proves the tarballs installed are the ones the registry signed.
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit signatures
       - run: node scripts/check.mjs
       - run: npm test
