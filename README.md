@@ -124,6 +124,14 @@ one published on the register.
 
 Code is MIT.
 
+## Security and privacy
+
+The server speaks stdio only, holds no secrets and contacts two hosts: the
+register, for every answer, and registry.npmjs.org, once at start-up, to say
+whether a newer release exists. Inputs and downloads are bounded so that one
+call cannot hold the process. [SECURITY.md](SECURITY.md) lists the limits,
+the supply-chain measures and how to report a vulnerability.
+
 ## Development
 
 ```
