@@ -69,3 +69,24 @@ test('a call the client has cancelled stops at the register fetch', async () => 
   );
   assert.equal(calls, 1, 'a cancelled request is not retried');
 });
+
+import { getTitle } from '../dist/frl.js';
+
+test('refresh bypasses the cache and asks the register again', async () => {
+  let calls = 0;
+  const stub = async () => {
+    calls++;
+    const res = new Response(JSON.stringify({ id: 'C2000A00001', name: 'Example Act 2000', status: 'InForce' }));
+    Object.defineProperty(res, 'url', { value: 'https://api.prod.legislation.gov.au/v1/Titles' });
+    return res;
+  };
+  await withFetch(stub, async () => {
+    await getTitle('C2000A00001');
+    await getTitle('C2000A00001');
+    assert.equal(calls, 1, 'the second lookup is served from the cache');
+    await getTitle('C2000A00001', true);
+    assert.equal(calls, 2, 'refresh goes back to the register');
+    await getTitle('C2000A00001');
+    assert.equal(calls, 2, 'the refreshed answer is cached in turn');
+  });
+});

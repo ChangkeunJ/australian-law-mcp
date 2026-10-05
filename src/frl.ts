@@ -203,8 +203,10 @@ export async function readBody(res: Response, cap: number, what: string): Promis
   return out;
 }
 
-async function getJson<T>(path: string, ttl: number): Promise<T> {
-  const hit = cache.get(path);
+// fresh skips the cache read but not the write: the answer the register just
+// gave is the one the next caller should see.
+async function getJson<T>(path: string, ttl: number, fresh = false): Promise<T> {
+  const hit = fresh ? undefined : cache.get(path);
   if (hit && Date.now() - hit.at < ttl) return hit.value as T;
   const res = await request(path);
   if (!res.ok) {
@@ -292,16 +294,16 @@ export async function searchTitles(
   return { count: data['@odata.count'] ?? data.value.length, titles: data.value.map(nameTitleEnums) };
 }
 
-export async function amendingTitles(titleId: string, top = 15): Promise<SearchResult> {
+export async function amendingTitles(titleId: string, top = 15, fresh = false): Promise<SearchResult> {
   const criteria = encodeURIComponent(`affectedby("${pathId(titleId)}",[amending])`);
   const path = `/titles/search(criteria='${criteria}')?$top=${Math.min(top, 100)}&$count=true`;
-  const data = await getJson<ODataList<Title>>(path, HOUR);
+  const data = await getJson<ODataList<Title>>(path, HOUR, fresh);
   return { count: data['@odata.count'] ?? data.value.length, titles: data.value.map(nameTitleEnums) };
 }
 
-export async function getTitle(titleId: string): Promise<Title | null> {
+export async function getTitle(titleId: string, fresh = false): Promise<Title | null> {
   try {
-    return nameTitleEnums(await getJson<Title>(`/Titles('${pathId(titleId)}')`, HOUR));
+    return nameTitleEnums(await getJson<Title>(`/Titles('${pathId(titleId)}')`, HOUR, fresh));
   } catch (e) {
     // pathId has already rejected anything that is not id-shaped, so the 400
     // the register answers for an unknown id means exactly "no such title".
@@ -327,11 +329,15 @@ export function assertDate(date: string): string {
   return date;
 }
 
-export async function findVersion(titleId: string, asAt?: string): Promise<Version | null> {
+export async function findVersion(titleId: string, asAt?: string, fresh = false): Promise<Version | null> {
   const selector = asAt ? `asAt=${assertDate(asAt)}T00:00:00` : `asAtSpecification='Latest'`;
   try {
     return nameVersionEnums(
-      await getJson<Version>(`/Versions/Find(titleId='${pathId(titleId)}',${selector})`, asAt ? 24 * HOUR : HOUR),
+      await getJson<Version>(
+        `/Versions/Find(titleId='${pathId(titleId)}',${selector})`,
+        asAt ? 24 * HOUR : HOUR,
+        fresh,
+      ),
     );
   } catch (e) {
     if (e instanceof FrlError && e.status === 404) return null;
@@ -340,18 +346,24 @@ export async function findVersion(titleId: string, asAt?: string): Promise<Versi
 }
 
 // The API caps $top at 100.
-export async function listVersions(titleId: string, top = 100, order: 'asc' | 'desc' = 'desc'): Promise<Version[]> {
+export async function listVersions(
+  titleId: string,
+  top = 100,
+  order: 'asc' | 'desc' = 'desc',
+  fresh = false,
+): Promise<Version[]> {
   const filter = encodeURIComponent(`titleId eq '${pathId(titleId)}'`);
   const orderBy = encodeURIComponent(`start ${order}`);
   const data = await getJson<ODataList<Version>>(
     `/Versions?$filter=${filter}&$orderby=${orderBy}&$top=${Math.min(top, 100)}`,
     HOUR,
+    fresh,
   );
   return data.value.map(nameVersionEnums);
 }
 
-export async function earliestVersion(titleId: string): Promise<Version | null> {
-  const rows = await listVersions(titleId, 1, 'asc');
+export async function earliestVersion(titleId: string, fresh = false): Promise<Version | null> {
+  const rows = await listVersions(titleId, 1, 'asc', fresh);
   return rows[0] ?? null;
 }
 

@@ -80,7 +80,18 @@ function sizeOf(act: ActText): number {
   return n;
 }
 
-async function loadAct(version: frl.Version, asAt?: string): Promise<ActText> {
+function forget(registerId: string): void {
+  if (!actCache.delete(registerId)) return;
+  cachedChars -= actChars.get(registerId) ?? 0;
+  actChars.delete(registerId);
+}
+
+// A refresh downloads the compilation again even though its register id has
+// not changed: the register regenerates documents, and a compilation whose
+// first download parsed to nothing would otherwise stay unreadable for the
+// life of the process. It costs one bounded download, only on request.
+async function loadAct(version: frl.Version, asAt?: string, fresh = false): Promise<ActText> {
+  if (fresh) forget(version.registerId);
   const hit = actCache.get(version.registerId);
   if (hit) return hit;
   const act = parseAct(epubDocuments(await frl.getEpub(version.titleId, asAt)));
@@ -91,9 +102,7 @@ async function loadAct(version: frl.Version, asAt?: string): Promise<ActText> {
   while (actCache.size > 1 && (actCache.size > CACHE_ENTRIES || cachedChars > CACHE_CHARS)) {
     const oldest = actCache.keys().next().value;
     if (oldest === undefined) break;
-    actCache.delete(oldest);
-    cachedChars -= actChars.get(oldest) ?? 0;
-    actChars.delete(oldest);
+    forget(oldest);
   }
   return act;
 }
@@ -198,6 +207,7 @@ const readOnly = { readOnlyHint: true, openWorldHint: true };
 const TITLE_ID = z.string().regex(/^[A-Za-z0-9]{1,20}$/, 'a register title id is letters and digits only, e.g. C2004A03348');
 // yyyy-mm-dd; frl.assertDate does the calendar check.
 const DATE = z.string().max(10);
+const REFRESH = z.boolean().optional().describe('Bypass the server caches and read the register again');
 
 export function createServer(): McpServer {
   const server = new McpServer(
@@ -288,14 +298,16 @@ export function createServer(): McpServer {
         section: z.string().max(100).optional().describe('Section number, e.g. "3A" or "90-5"'),
         full: z.boolean().optional().describe('Return the full text instead of the table of sections'),
         page: z.number().int().min(1).optional(),
+        refresh: REFRESH,
       }),
       annotations: readOnly,
     },
     tool(async (args) => {
       const titleId = args.titleId as string;
-      const version = await frl.findVersion(titleId);
+      const fresh = args.refresh === true;
+      const version = await frl.findVersion(titleId, undefined, fresh);
       if (!version) return `No version of ${titleId} found on the register.`;
-      const act = await loadAct(version);
+      const act = await loadAct(version, undefined, fresh);
       let body: string;
       if (act.provisions.length === 0) {
         body = unparsed(version);
@@ -323,15 +335,17 @@ export function createServer(): McpServer {
         section: z.string().max(100).optional(),
         full: z.boolean().optional(),
         page: z.number().int().min(1).optional(),
+        refresh: REFRESH,
       }),
       annotations: readOnly,
     },
     tool(async (args) => {
       const titleId = args.titleId as string;
+      const fresh = args.refresh === true;
       const date = frl.assertDate(args.date as string);
-      const version = await frl.findVersion(titleId, date);
+      const version = await frl.findVersion(titleId, date, fresh);
       if (!version) {
-        const earliest = await frl.earliestVersion(titleId);
+        const earliest = await frl.earliestVersion(titleId, fresh);
         return earliest
           ? `No version of ${titleId} was in force on ${date}. The earliest version on the register starts ${earliest.start.slice(0, 10)}.`
           : `No versions of ${titleId} found on the register.`;
@@ -346,7 +360,7 @@ export function createServer(): McpServer {
           `Read it on the register: ${webLink(titleId)}`
         );
       }
-      const act = await loadAct(version, date);
+      const act = await loadAct(version, date, fresh);
       let body: string;
       if (act.provisions.length === 0) {
         body = unparsed(version);
@@ -368,12 +382,13 @@ export function createServer(): McpServer {
       description:
         'Reports whether a title is in force, what its latest compilation incorporates, whether commenced ' +
         'amendments are still unincorporated, and which acts have amended it.',
-      inputSchema: z.object({ titleId: TITLE_ID }),
+      inputSchema: z.object({ titleId: TITLE_ID, refresh: REFRESH }),
       annotations: readOnly,
     },
     tool(async (args) => {
       const titleId = args.titleId as string;
-      const title = await frl.getTitle(titleId);
+      const fresh = args.refresh === true;
+      const title = await frl.getTitle(titleId, fresh);
       if (!title) return `No title ${titleId} on the register.`;
       const lines = [`${title.name} [${title.id}] — ${statusLabel(title)}`];
       for (const entry of title.statusHistory ?? []) {
@@ -382,7 +397,7 @@ export function createServer(): McpServer {
           .join('; ');
         lines.push(`  ${entry.start.slice(0, 10)}: ${entry.status}${why ? ` (${why})` : ''}`);
       }
-      const version = await frl.findVersion(titleId);
+      const version = await frl.findVersion(titleId, undefined, fresh);
       if (version) {
         lines.push('');
         lines.push(
@@ -402,7 +417,7 @@ export function createServer(): McpServer {
           lines.push('  Warning: commenced amendments are not yet incorporated in this compilation.');
         }
       }
-      const amending = await frl.amendingTitles(titleId, 15);
+      const amending = await frl.amendingTitles(titleId, 15, fresh);
       if (amending.count > 0) {
         lines.push('');
         lines.push(`Amended by ${amending.count} titles. Most relevant:`);
@@ -426,11 +441,13 @@ export function createServer(): McpServer {
         dateB: DATE.describe('yyyy-mm-dd, the later date'),
         section: z.string().max(100).optional(),
         page: z.number().int().min(1).optional(),
+        refresh: REFRESH,
       }),
       annotations: readOnly,
     },
     tool(async (args) => {
       const titleId = args.titleId as string;
+      const fresh = args.refresh === true;
       const dateA = frl.assertDate(args.dateA as string);
       const dateB = frl.assertDate(args.dateB as string);
       // Added and removed are read off the direction of travel, so taking the
@@ -438,7 +455,10 @@ export function createServer(): McpServer {
       if (dateA > dateB) {
         throw new Error(`dateA (${dateA}) must be on or before dateB (${dateB}), or the changes are reported backwards`);
       }
-      const [va, vb] = await Promise.all([frl.findVersion(titleId, dateA), frl.findVersion(titleId, dateB)]);
+      const [va, vb] = await Promise.all([
+        frl.findVersion(titleId, dateA, fresh),
+        frl.findVersion(titleId, dateB, fresh),
+      ]);
       if (!va || !vb) {
         return `No version in force on ${!va ? dateA : dateB} for ${titleId}.`;
       }
@@ -461,7 +481,7 @@ export function createServer(): McpServer {
       if (va.registerId === vb.registerId) {
         return `${intro}\n\nSame compilation was in force on both dates — no textual change between them.`;
       }
-      const [actA, actB] = await Promise.all([loadAct(va, dateA), loadAct(vb, dateB)]);
+      const [actA, actB] = await Promise.all([loadAct(va, dateA, fresh), loadAct(vb, dateB, fresh)]);
       // Diffing against an empty side would present the entire act as newly
       // enacted, which reads as a sweeping amendment that never happened.
       if (actA.provisions.length === 0 || actB.provisions.length === 0) {

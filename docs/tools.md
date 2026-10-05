@@ -13,10 +13,10 @@ and `F2019L00196` for a legislative instrument.
 | --- | --- |
 | `search_law` | `query`, optional `limit` (1–50, default 10) |
 | `search_full_text` | `phrase`, optional `match` (`exact`/`all`/`any`, default `exact`), optional `limit` |
-| `get_law_text` | `titleId`, optional `section`, `full`, `page` |
-| `get_law_as_at` | `titleId`, `date` (yyyy-mm-dd), optional `section`, `full`, `page` |
-| `get_amendment_status` | `titleId` |
-| `compare_versions` | `titleId`, `dateA`, `dateB`, optional `section`, `page` |
+| `get_law_text` | `titleId`, optional `section`, `full`, `page`, `refresh` |
+| `get_law_as_at` | `titleId`, `date` (yyyy-mm-dd), optional `section`, `full`, `page`, `refresh` |
+| `get_amendment_status` | `titleId`, optional `refresh` |
+| `compare_versions` | `titleId`, `dateA`, `dateB`, optional `section`, `page`, `refresh` |
 | `verify_citations` | `text` (up to 50,000 characters; the first 25 citations are checked) |
 | `check_frl_health` | nothing |
 
@@ -156,6 +156,12 @@ because rate tables and forms usually live in a schedule rather than in the
 sections.
 
 `full: true` returns the whole text, paginated; pass `page` for the rest.
+
+Register lookups are cached for an hour (a day for dated ones) and the parsed
+text of a compilation for the life of the process. `refresh: true` bypasses
+both and reads the register again, which matters on the day a new compilation
+is published. The same flag is accepted by `get_law_as_at`,
+`get_amendment_status` and `compare_versions`.
 
 A section that does not exist says so, with the shape of the act and the
 nearest numbers, so the answer can be distinguished from a lookup failure:
