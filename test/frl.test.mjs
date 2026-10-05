@@ -52,3 +52,20 @@ test('a response from the register itself is read', async () => {
     async () => assert.equal((await ping()).release, 'release-1'),
   );
 });
+
+import { callScope } from '../dist/frl.js';
+
+test('a call the client has cancelled stops at the register fetch', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let calls = 0;
+  await withFetch(
+    async (_url, init) => {
+      calls++;
+      init.signal.throwIfAborted();
+      return new Response('[]');
+    },
+    () => callScope.run({ signal: controller.signal }, () => assert.rejects(ping(), /cancelled by the client/)),
+  );
+  assert.equal(calls, 1, 'a cancelled request is not retried');
+});

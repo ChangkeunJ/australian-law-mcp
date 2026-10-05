@@ -18,6 +18,8 @@
 //   and as their name from Versions/Find(asAtSpecification='Latest'), so both
 //   have to be accepted
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
 const REGISTER_HOST = 'api.prod.legislation.gov.au';
 const BASE = `https://${REGISTER_HOST}/v1`;
 const UA = 'australian-law-mcp (github.com/ChangkeunJ/australian-law-mcp)';
@@ -125,13 +127,25 @@ const MAX_EPUB_BYTES = 300 * 1024 * 1024;
 const MAX_ERROR_BYTES = 64 * 1024;
 const decoder = new TextDecoder();
 
+// The abort signal of the tool call in progress, so that a request the client
+// has cancelled stops at the register fetch. It travels in async context
+// rather than as a parameter on every function between the tool and the fetch.
+export const callScope = new AsyncLocalStorage<{ signal: AbortSignal }>();
+
+function requestSignal(): AbortSignal {
+  const timeout = AbortSignal.timeout(30_000);
+  const call = callScope.getStore()?.signal;
+  // AbortSignal.any arrived in Node 20.3; before that the timeout alone applies.
+  return call && typeof AbortSignal.any === 'function' ? AbortSignal.any([timeout, call]) : timeout;
+}
+
 async function request(path: string): Promise<Response> {
   let last: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(BASE + path, {
         headers: { 'user-agent': UA },
-        signal: AbortSignal.timeout(30_000),
+        signal: requestSignal(),
       });
       // fetch follows redirects on its own. The register is the only host this
       // server reads from, so a body that arrived from anywhere else is
@@ -149,10 +163,13 @@ async function request(path: string): Promise<Response> {
     } catch (e) {
       if (e instanceof FrlError) throw e;
       last = e;
-      // A request that ran out of time will run out of time again; retrying it
-      // only doubles the wait before the caller hears about it.
-      if (e instanceof Error && e.name === 'TimeoutError') break;
+      // A request that ran out of time will run out of time again, and one the
+      // client cancelled is no longer wanted; neither is retried.
+      if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError')) break;
     }
+  }
+  if (last instanceof Error && last.name === 'AbortError') {
+    throw new FrlError(`the request for ${path} was cancelled by the client`);
   }
   const reason = last instanceof Error ? last.message : String(last);
   throw new FrlError(`could not reach the Federal Register of Legislation API (${reason}) for ${path}`);

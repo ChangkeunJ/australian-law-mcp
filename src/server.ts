@@ -172,11 +172,17 @@ const KEYWORD = /\b(act|regulations?|rules|code|determination)\b/i;
 const EMPTY: frl.SearchResult = { count: 0, titles: [] };
 
 type Args = Record<string, unknown>;
+interface CallContext {
+  mcpReq: { signal: AbortSignal };
+}
 
+// The call's abort signal is handed to frl.callScope so that a request the
+// client has cancelled stops at the register fetch instead of running on.
 function tool(fn: (args: Args) => Promise<string>) {
-  return async (args: Args) => {
+  return async (args: Args, ctx: CallContext) => {
     try {
-      return { content: [{ type: 'text' as const, text: await fn(args) }] };
+      const text = await frl.callScope.run({ signal: ctx.mcpReq.signal }, () => fn(args));
+      return { content: [{ type: 'text' as const, text }] };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return { content: [{ type: 'text' as const, text: `Error: ${message}` }], isError: true };
