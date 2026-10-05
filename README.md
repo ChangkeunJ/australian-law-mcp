@@ -42,6 +42,13 @@ docker build -t australian-law-mcp .
 docker run -i --rm australian-law-mcp
 ```
 
+At start-up the server asks npm once whether a newer release exists and, if
+so, says so on stderr and in `check_frl_health`. `npx -y` picks a new release
+up on its own at the next restart; global installs and Docker images do not,
+which is who the notice is for. Set `AUSTRALIAN_LAW_MCP_NO_UPDATE_CHECK=1` to
+skip the check (`NO_UPDATE_NOTIFIER` and `CI` are honoured too). It never
+delays a tool call and contacts nothing but registry.npmjs.org.
+
 ## Tools
 
 | tool | what it does |

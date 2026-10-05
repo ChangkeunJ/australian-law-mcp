@@ -409,6 +409,10 @@ check_frl_health {}
 Federal Register of Legislation API is up: 254 ms round trip, release 2026.08.13-releaseyaml.1+196e8e595528bb8e0d8f473387d92ad1f7907f05.
 ```
 
+A second line names the running server version, and a third says when a
+newer release is on npm and how to install it for each way of running the
+server.
+
 ## Attribution
 
 Every response that reproduces register content ends with the attribution the

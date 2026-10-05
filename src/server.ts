@@ -4,6 +4,7 @@ import { z } from 'zod';
 import * as frl from './frl.js';
 import { parseCitations } from './cite.js';
 import { renderChanges, selectChanges } from './changes.js';
+import { startUpdateCheck } from './update.js';
 import {
   type ActText,
   type Provision,
@@ -16,7 +17,7 @@ import {
 
 // Read rather than hardcode: a stale literal here reports the wrong server
 // version to every client after a release.
-const VERSION: string = JSON.parse(
+export const VERSION: string = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ).version;
 const PAGE_SIZE = 5000;
@@ -730,13 +731,22 @@ export function createServer(): McpServer {
     'check_frl_health',
     {
       title: 'Check the register API',
-      description: 'Pings the Federal Register of Legislation API and reports latency, so failures elsewhere can be attributed.',
+      description:
+        'Pings the Federal Register of Legislation API and reports latency, so failures elsewhere can be attributed. ' +
+        'Also reports the server version and whether a newer release is on npm.',
       inputSchema: z.object({}),
       annotations: readOnly,
     },
     tool(async () => {
       const { ms, release } = await frl.ping();
-      return `Federal Register of Legislation API is up: ${ms} ms round trip${release ? `, release ${release}` : ''}.`;
+      // Already settled by now in practice; awaiting it costs nothing then and
+      // at most the check's own timeout otherwise.
+      const notice = await startUpdateCheck(VERSION);
+      return (
+        `Federal Register of Legislation API is up: ${ms} ms round trip${release ? `, release ${release}` : ''}.\n` +
+        `Server version ${VERSION}.` +
+        (notice ? `\n${notice}` : '')
+      );
     }),
   );
 
